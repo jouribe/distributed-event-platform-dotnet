@@ -260,6 +260,164 @@ public class EventRepositoryTests
             () => _sut.GetRetryableEventsAsync(DateTimeOffset.UtcNow, pageSize: 10, skip: -1));
     }
 
+    [Fact]
+    public async Task GetCountAsync_OpensConnection_WhenCountingByStatus()
+    {
+        // Arrange
+        var fakeConnection = new FakeDbConnection();
+
+        _mockConnectionFactory
+            .Setup(cf => cf.CreateConnection())
+            .Returns(fakeConnection);
+
+        // Act
+        var result = await _sut.GetCountAsync(EventStatus.SUCCEEDED);
+
+        // Assert
+        Assert.Equal(1, fakeConnection.OpenCount);
+        Assert.Equal(0L, result);
+    }
+
+    [Fact]
+    public async Task GetCountAsync_ThrowsOperationCanceledException_WhenCancellationRequested()
+    {
+        // Arrange
+        var cancellationToken = CreateCanceledToken();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => _sut.GetCountAsync(EventStatus.SUCCEEDED, cancellationToken: cancellationToken));
+    }
+
+    [Fact]
+    public async Task GetCountAsync_ThrowsArgumentException_WhenTenantIdIsBlank()
+    {
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => _sut.GetCountAsync(EventStatus.SUCCEEDED, tenantId: "  "));
+    }
+
+    [Fact]
+    public async Task GetByCorrelationIdAsync_OpensConnection_WhenRetrievingEvents()
+    {
+        // Arrange
+        var fakeConnection = new FakeDbConnection();
+
+        _mockConnectionFactory
+            .Setup(cf => cf.CreateConnection())
+            .Returns(fakeConnection);
+
+        // Act
+        var result = await _sut.GetByCorrelationIdAsync(Guid.NewGuid());
+
+        // Assert
+        Assert.Equal(1, fakeConnection.OpenCount);
+        Assert.NotNull(result);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task GetByCorrelationIdAsync_ThrowsOperationCanceledException_WhenCancellationRequested()
+    {
+        // Arrange
+        var cancellationToken = CreateCanceledToken();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => _sut.GetByCorrelationIdAsync(Guid.NewGuid(), cancellationToken));
+    }
+
+    [Fact]
+    public async Task GetByCorrelationIdAsync_ThrowsArgumentException_WhenCorrelationIdIsEmpty()
+    {
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => _sut.GetByCorrelationIdAsync(Guid.Empty));
+    }
+
+    [Fact]
+    public async Task GetByTenantIdAsync_OpensConnection_WhenRetrievingTenantEvents()
+    {
+        // Arrange
+        var fakeConnection = new FakeDbConnection();
+
+        _mockConnectionFactory
+            .Setup(cf => cf.CreateConnection())
+            .Returns(fakeConnection);
+
+        // Act
+        var result = await _sut.GetByTenantIdAsync("test-tenant", pageSize: 25, skip: 0);
+
+        // Assert
+        Assert.Equal(1, fakeConnection.OpenCount);
+        Assert.NotNull(result);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task GetByTenantIdAsync_ThrowsOperationCanceledException_WhenCancellationRequested()
+    {
+        // Arrange
+        var cancellationToken = CreateCanceledToken();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => _sut.GetByTenantIdAsync("test-tenant", cancellationToken: cancellationToken));
+    }
+
+    [Fact]
+    public async Task GetByTenantIdAsync_ThrowsArgumentException_WhenTenantIdIsBlank()
+    {
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => _sut.GetByTenantIdAsync(" "));
+    }
+
+    [Fact]
+    public async Task GetByTenantIdAsync_ThrowsArgumentOutOfRangeException_WhenPageSizeIsInvalid()
+    {
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => _sut.GetByTenantIdAsync("test-tenant", pageSize: 0, skip: 0));
+    }
+
+    [Fact]
+    public async Task GetByTenantIdAsync_ThrowsArgumentOutOfRangeException_WhenSkipIsNegative()
+    {
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => _sut.GetByTenantIdAsync("test-tenant", pageSize: 10, skip: -1));
+    }
+
+    [Fact]
+    public async Task GetOldestRetryableAsync_OpensConnection_WhenRetrievingOldestRetryableEvent()
+    {
+        // Arrange
+        var fakeConnection = new FakeDbConnection();
+
+        _mockConnectionFactory
+            .Setup(cf => cf.CreateConnection())
+            .Returns(fakeConnection);
+
+        // Act
+        var result = await _sut.GetOldestRetryableAsync(DateTimeOffset.UtcNow);
+
+        // Assert
+        Assert.Equal(1, fakeConnection.OpenCount);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetOldestRetryableAsync_ThrowsOperationCanceledException_WhenCancellationRequested()
+    {
+        // Arrange
+        var cancellationToken = CreateCanceledToken();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => _sut.GetOldestRetryableAsync(DateTimeOffset.UtcNow, cancellationToken));
+    }
+
     /// <summary>
     /// Helper method to create a valid EventEnvelope for testing.
     /// </summary>

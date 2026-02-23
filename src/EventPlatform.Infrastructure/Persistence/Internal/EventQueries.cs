@@ -65,6 +65,55 @@ internal static class EventQueries
         OFFSET @Skip";
 
     /// <summary>
+    /// SQL query to count events by status with optional tenant filter.
+    /// </summary>
+    public const string GetCountByStatus = @"
+        SELECT COUNT(*)
+        FROM events
+        WHERE status = @Status
+          AND (@TenantId IS NULL OR tenant_id = @TenantId)";
+
+    /// <summary>
+    /// SQL query to retrieve events by correlation ID ordered chronologically.
+    /// </summary>
+    public const string GetByCorrelationId = @"
+        SELECT
+            id, tenant_id, event_type, occurred_at, received_at,
+            payload, idempotency_key, correlation_id, status, attempts,
+            next_attempt_at, last_error
+        FROM events
+        WHERE correlation_id = @CorrelationId
+        ORDER BY received_at ASC, id ASC";
+
+    /// <summary>
+    /// SQL query to retrieve paged events for a tenant ordered by latest first.
+    /// </summary>
+    public const string GetByTenantIdPage = @"
+        SELECT
+            id, tenant_id, event_type, occurred_at, received_at,
+            payload, idempotency_key, correlation_id, status, attempts,
+            next_attempt_at, last_error
+        FROM events
+        WHERE tenant_id = @TenantId
+        ORDER BY received_at DESC, id DESC
+        LIMIT @Take
+        OFFSET @Skip";
+
+    /// <summary>
+    /// SQL query to retrieve the oldest retryable event eligible for processing.
+    /// </summary>
+    public const string GetOldestRetryable = @"
+        SELECT
+            id, tenant_id, event_type, occurred_at, received_at,
+            payload, idempotency_key, correlation_id, status, attempts,
+            next_attempt_at, last_error
+        FROM events
+        WHERE status = @Status
+          AND next_attempt_at <= @Now
+        ORDER BY next_attempt_at ASC, id ASC
+        LIMIT 1";
+
+    /// <summary>
     /// SQL query for batch insert with conflict detection and detailed results.
     /// Uses PostgreSQL UNNEST for efficient multi-row insertion.
     /// Returns the outcome for each input event (Success or Conflict).
