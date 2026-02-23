@@ -35,6 +35,8 @@ public sealed class EventRepository : IEventRepository
         if (envelope == null)
             throw new ArgumentNullException(nameof(envelope));
 
+        cancellationToken.ThrowIfCancellationRequested();
+
         using var connection = _connectionFactory.CreateConnection();
         connection.Open();
 
@@ -54,7 +56,13 @@ public sealed class EventRepository : IEventRepository
             envelope.LastError
         };
 
-        await connection.ExecuteAsync(EventQueries.InsertEvent, parameters, commandTimeout: 30);
+        var command = new CommandDefinition(
+            EventQueries.InsertEvent,
+            parameters,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        await connection.ExecuteAsync(command);
     }
 
     /// <summary>
@@ -66,6 +74,8 @@ public sealed class EventRepository : IEventRepository
     /// <returns>A task representing the asynchronous operation.</returns>
     public async Task UpdateStatusAsync(Guid eventId, EventStatus newStatus, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         using var connection = _connectionFactory.CreateConnection();
         connection.Open();
 
@@ -75,7 +85,13 @@ public sealed class EventRepository : IEventRepository
             EventId = eventId
         };
 
-        await connection.ExecuteAsync(EventQueries.UpdateStatus, parameters, commandTimeout: 30);
+        var command = new CommandDefinition(
+            EventQueries.UpdateStatus,
+            parameters,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        await connection.ExecuteAsync(command);
     }
 
     /// <summary>
@@ -86,12 +102,20 @@ public sealed class EventRepository : IEventRepository
     /// <returns>A task representing the asynchronous operation.</returns>
     public async Task IncrementAttemptsAsync(Guid eventId, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         using var connection = _connectionFactory.CreateConnection();
         connection.Open();
 
         var parameters = new { EventId = eventId };
 
-        await connection.ExecuteAsync(EventQueries.IncrementAttempts, parameters, commandTimeout: 30);
+        var command = new CommandDefinition(
+            EventQueries.IncrementAttempts,
+            parameters,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        await connection.ExecuteAsync(command);
     }
 
     /// <summary>
@@ -102,15 +126,20 @@ public sealed class EventRepository : IEventRepository
     /// <returns>The event envelope, or null if not found.</returns>
     public async Task<EventEnvelope?> GetByIdAsync(Guid eventId, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         using var connection = _connectionFactory.CreateConnection();
         connection.Open();
 
         var parameters = new { EventId = eventId };
 
-        var result = await connection.QuerySingleOrDefaultAsync<EventEnvelopeDto>(
+        var command = new CommandDefinition(
             EventQueries.GetById,
             parameters,
-            commandTimeout: 30);
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        var result = await connection.QuerySingleOrDefaultAsync<EventEnvelopeDto>(command);
 
         return result == null ? null : result.ToEventEnvelope();
     }
@@ -123,6 +152,8 @@ public sealed class EventRepository : IEventRepository
     /// <returns>A collection of retryable event envelopes.</returns>
     public async Task<IEnumerable<EventEnvelope>> GetRetryableEventsAsync(DateTimeOffset now, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         using var connection = _connectionFactory.CreateConnection();
         connection.Open();
 
@@ -132,10 +163,13 @@ public sealed class EventRepository : IEventRepository
             Now = now
         };
 
-        var results = await connection.QueryAsync<EventEnvelopeDto>(
+        var command = new CommandDefinition(
             EventQueries.GetRetryableEvents,
             parameters,
-            commandTimeout: 30);
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        var results = await connection.QueryAsync<EventEnvelopeDto>(command);
 
         return results.Select(dto => dto.ToEventEnvelope()).ToList();
     }
