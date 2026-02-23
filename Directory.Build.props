@@ -1,0 +1,12 @@
+<Project>
+  <!-- Apply only to test projects -->
+  <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
+    <CollectCoverage>true</CollectCoverage>
+    <CoverletOutputFormat>coverage</CoverletOutputFormat>
+
+    <!-- Coverage gate -->
+    <ThresholdType>line</ThresholdType>
+    <ThresholdStat>total</ThresholdStat>
+    <Threshold>70</Threshold>
+  </PropertyGroup>
+</Project>
