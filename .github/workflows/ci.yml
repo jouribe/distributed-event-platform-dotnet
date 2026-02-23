@@ -44,7 +44,7 @@ jobs:
         run: dotnet build --no-restore --configuration Release
 
       # Runs tests + enforces thresholds from Directory.Build.props
-      - name: Test (coverage gate: line>=70, branch>=50)
+      - name: Test (coverage gate line>=70, branch>=50)
         run: dotnet test --no-build --configuration Release
 
       # Generate consolidated report (HTML + markdown summary + merged Cobertura)
