@@ -40,22 +40,84 @@ CREATE INDEX IF NOT EXISTS ix_events_correlation_id
   ON event_platform.events (correlation_id);
 
 -- Guardrails
-ALTER TABLE event_platform.events
-  ADD CONSTRAINT chk_events_attempts_nonneg CHECK (attempts >= 0);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'chk_events_attempts_nonneg'
+  ) THEN
+    ALTER TABLE event_platform.events
+      ADD CONSTRAINT chk_events_attempts_nonneg CHECK (attempts >= 0);
+  END IF;
+END $$;
 
-ALTER TABLE event_platform.events
-  ADD CONSTRAINT chk_events_tenant_id_not_blank CHECK (length(btrim(tenant_id)) > 0);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'chk_events_tenant_id_not_blank'
+  ) THEN
+    ALTER TABLE event_platform.events
+      ADD CONSTRAINT chk_events_tenant_id_not_blank CHECK (length(btrim(tenant_id)) > 0);
+  END IF;
+END $$;
 
-ALTER TABLE event_platform.events
-  ADD CONSTRAINT chk_events_event_type_not_blank CHECK (length(btrim(event_type)) > 0);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'chk_events_event_type_not_blank'
+  ) THEN
+    ALTER TABLE event_platform.events
+      ADD CONSTRAINT chk_events_event_type_not_blank CHECK (length(btrim(event_type)) > 0);
+  END IF;
+END $$;
 
-ALTER TABLE event_platform.events
-  ADD CONSTRAINT chk_events_status_allowed
-  CHECK (status IN (
-    'RECEIVED',
-    'QUEUED',
-    'PROCESSING',
-    'SUCCEEDED',
-    'FAILED_RETRYABLE',
-    'FAILED_TERMINAL'
-  ));
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'chk_events_status_allowed'
+  ) THEN
+    ALTER TABLE event_platform.events
+      ADD CONSTRAINT chk_events_status_allowed
+      CHECK (status IN (
+        'RECEIVED',
+        'QUEUED',
+        'PROCESSING',
+        'SUCCEEDED',
+        'FAILED_RETRYABLE',
+        'FAILED_TERMINAL'
+      ));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'chk_events_idempotency_key_not_blank'
+  ) THEN
+    ALTER TABLE event_platform.events
+      ADD CONSTRAINT chk_events_idempotency_key_not_blank
+      CHECK (idempotency_key IS NULL OR length(btrim(idempotency_key)) > 0);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'chk_events_next_attempt_after_received'
+  ) THEN
+    ALTER TABLE event_platform.events
+      ADD CONSTRAINT chk_events_next_attempt_after_received
+      CHECK (next_attempt_at IS NULL OR next_attempt_at >= received_at);
+  END IF;
+END $$;

@@ -88,11 +88,18 @@ or
 
 docker compose -f deployments/docker-compose.yml up -d
 
-### 2️⃣ Run API
+### 2️⃣ Apply database migrations
+
+PowerShell:
+
+$env:EVENTPLATFORM_DB="Host=localhost;Port=5432;Database=event_platform;Username=event_platform;Password=event_platform"
+dotnet run --project src/EventPlatform.DbMigrator
+
+### 3️⃣ Run API
 
 dotnet run --project src/EventIngestion.Api
 
-### 3️⃣ Run Worker
+### 4️⃣ Run Worker
 
 dotnet run --project src/EventWorker
 

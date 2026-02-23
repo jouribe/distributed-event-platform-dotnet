@@ -1,19 +1,22 @@
 ﻿using DbUp;
 using DbUp.Engine;
+using System.Text.RegularExpressions;
 
-var connectionString = Environment.GetEnvironmentVariable("EVENTPLATFORM_DB") ?? throw new InvalidOperationException("DB_CONNECTION_STRING environment variable is not set.");
+var connectionString = Environment.GetEnvironmentVariable("EVENTPLATFORM_DB") ?? throw new InvalidOperationException("EVENTPLATFORM_DB environment variable is not set.");
 
-Console.WriteLine("Runing database migration...");
+Console.WriteLine("Running database migration...");
 Console.WriteLine($"DB: {Redact(connectionString)}");
 
 var scriptsPath = Path.Combine(AppContext.BaseDirectory);
+var migrationScriptRegex = new Regex(@"^\d+_.+\.sql$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
 UpgradeEngine upgrader =
     DeployChanges.To
         .PostgresqlDatabase(connectionString)
+        .JournalToPostgresqlTable("event_platform", "schema_versions")
         .WithScriptsFromFileSystem(
             scriptsPath,
-            f => f.EndsWith(".sql", StringComparison.OrdinalIgnoreCase))
+            f => migrationScriptRegex.IsMatch(Path.GetFileName(f)))
         .LogToConsole()
         .Build();
 
