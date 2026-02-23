@@ -19,6 +19,13 @@ Constraints:
 
 UNIQUE (tenant_id, idempotency_key)
 
+Recommended domain constraints:
+
+- `source` must be non-empty.
+- `correlation_id` must be non-empty UUID.
+- `occurred_at <= received_at`.
+- `next_attempt_at` must be null unless `status = FAILED_RETRYABLE`.
+
 ## Recommended indexes
 
 - `idx_events_status_next_attempt_at` on `(status, next_attempt_at)`
