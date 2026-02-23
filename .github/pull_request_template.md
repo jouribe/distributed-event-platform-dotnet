@@ -1,11 +1,11 @@
 ## Summary
-Describe the change.
+Explain what changed and why.
 
 ## Related Issue
-Closes #
+Closes #<issue-number>
 
 ## Checklist
-- [ ] Linked to an issue
+- [ ] Linked to an issue (Closes/Fixes/Resolves/Refs #X)
 - [ ] Follows architecture boundaries
-- [ ] Tests updated if needed
-- [ ] CI passes
+- [ ] Tests updated/added if needed
+- [ ] CI is green
