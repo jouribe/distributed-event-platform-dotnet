@@ -1,0 +1,37 @@
+name: PR Title Conventional Commits
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  validate-pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title follows Conventional Commits
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = context.payload.pull_request.title.trim();
+
+            // Conventional Commits:
+            // type(scope?): subject
+            // Optional ! for breaking changes: type(scope)!: subject
+            // Examples:
+            // feat(api): add ingestion endpoint
+            // fix(worker)!: handle ack race condition
+            // docs: update README
+            const re = /^(feat|fix|docs|chore|refactor|test|ci|perf|build|style|revert)(\([a-z0-9_.-]+\))?(!)?:\s.+$/i;
+
+            if (!re.test(title)) {
+              core.setFailed(
+                `PR title must follow Conventional Commits.\n` +
+                `Examples:\n` +
+                `- feat(api): add ingestion endpoint\n` +
+                `- fix(worker): handle redis ack\n` +
+                `- docs: update ADR index\n` +
+                `Allowed types: feat, fix, docs, chore, refactor, test, ci, perf, build, style, revert`
+              );
+            } else {
+              console.log("PR title is valid:", title);
+            }
