@@ -2,11 +2,13 @@
   <!-- Apply only to test projects -->
   <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
     <CollectCoverage>true</CollectCoverage>
+
+    <!-- Generate Coverage per test project -->
     <CoverletOutputFormat>coverage</CoverletOutputFormat>
 
     <!-- Coverage gate -->
-    <ThresholdType>line</ThresholdType>
     <ThresholdStat>total</ThresholdStat>
-    <Threshold>70</Threshold>
+    <ThresholdType>line,branch</ThresholdType>
+    <Threshold>70,50</Threshold>
   </PropertyGroup>
 </Project>
