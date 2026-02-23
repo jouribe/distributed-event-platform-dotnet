@@ -1,7 +1,9 @@
 using System.Text.Json;
-using Xunit;
 using Moq;
 using System.Data;
+using System.Data.Common;
+using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using EventPlatform.Domain.Events;
 using EventPlatform.Infrastructure.Persistence.DataAccess;
 using EventPlatform.Infrastructure.Persistence.Repositories;
@@ -39,16 +41,25 @@ public class EventRepositoryTests
     }
 
     [Fact]
+    public async Task InsertAsync_ThrowsOperationCanceledException_WhenCancellationRequested()
+    {
+        // Arrange
+        var cancellationToken = CreateCanceledToken();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => _sut.InsertAsync(CreateValidEventEnvelope(), cancellationToken));
+    }
+
+    [Fact]
     public async Task InsertAsync_OpensConnection_WhenInsertingEvent()
     {
         // Arrange
-        var mockConnection = new Mock<IDbConnection>();
-        mockConnection.Setup(c => c.Open())
-            .Verifiable();
+        var fakeConnection = new FakeDbConnection();
 
         _mockConnectionFactory
             .Setup(cf => cf.CreateConnection())
-            .Returns(mockConnection.Object);
+            .Returns(fakeConnection);
 
         var envelope = CreateValidEventEnvelope();
 
@@ -56,21 +67,18 @@ public class EventRepositoryTests
         await _sut.InsertAsync(envelope);
 
         // Assert
-        mockConnection.Verify(c => c.Open(), Times.Once);
-        mockConnection.Verify(c => c.Dispose(), Times.Once);
+        Assert.Equal(1, fakeConnection.OpenCount);
     }
 
     [Fact]
     public async Task UpdateStatusAsync_OpensConnection_WhenUpdatingStatus()
     {
         // Arrange
-        var mockConnection = new Mock<IDbConnection>();
-        mockConnection.Setup(c => c.Open())
-            .Verifiable();
+        var fakeConnection = new FakeDbConnection();
 
         _mockConnectionFactory
             .Setup(cf => cf.CreateConnection())
-            .Returns(mockConnection.Object);
+            .Returns(fakeConnection);
 
         var eventId = Guid.NewGuid();
 
@@ -78,21 +86,29 @@ public class EventRepositoryTests
         await _sut.UpdateStatusAsync(eventId, EventStatus.QUEUED);
 
         // Assert
-        mockConnection.Verify(c => c.Open(), Times.Once);
-        mockConnection.Verify(c => c.Dispose(), Times.Once);
+        Assert.Equal(1, fakeConnection.OpenCount);
+    }
+
+    [Fact]
+    public async Task UpdateStatusAsync_ThrowsOperationCanceledException_WhenCancellationRequested()
+    {
+        // Arrange
+        var cancellationToken = CreateCanceledToken();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => _sut.UpdateStatusAsync(Guid.NewGuid(), EventStatus.QUEUED, cancellationToken));
     }
 
     [Fact]
     public async Task IncrementAttemptsAsync_OpensConnection_WhenIncrementingAttempts()
     {
         // Arrange
-        var mockConnection = new Mock<IDbConnection>();
-        mockConnection.Setup(c => c.Open())
-            .Verifiable();
+        var fakeConnection = new FakeDbConnection();
 
         _mockConnectionFactory
             .Setup(cf => cf.CreateConnection())
-            .Returns(mockConnection.Object);
+            .Returns(fakeConnection);
 
         var eventId = Guid.NewGuid();
 
@@ -100,21 +116,29 @@ public class EventRepositoryTests
         await _sut.IncrementAttemptsAsync(eventId);
 
         // Assert
-        mockConnection.Verify(c => c.Open(), Times.Once);
-        mockConnection.Verify(c => c.Dispose(), Times.Once);
+        Assert.Equal(1, fakeConnection.OpenCount);
+    }
+
+    [Fact]
+    public async Task IncrementAttemptsAsync_ThrowsOperationCanceledException_WhenCancellationRequested()
+    {
+        // Arrange
+        var cancellationToken = CreateCanceledToken();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => _sut.IncrementAttemptsAsync(Guid.NewGuid(), cancellationToken));
     }
 
     [Fact]
     public async Task GetByIdAsync_OpensConnection_WhenRetrievingEvent()
     {
         // Arrange
-        var mockConnection = new Mock<IDbConnection>();
-        mockConnection.Setup(c => c.Open())
-            .Verifiable();
+        var fakeConnection = new FakeDbConnection();
 
         _mockConnectionFactory
             .Setup(cf => cf.CreateConnection())
-            .Returns(mockConnection.Object);
+            .Returns(fakeConnection);
 
         var eventId = Guid.NewGuid();
 
@@ -122,21 +146,29 @@ public class EventRepositoryTests
         var result = await _sut.GetByIdAsync(eventId);
 
         // Assert
-        mockConnection.Verify(c => c.Open(), Times.Once);
-        mockConnection.Verify(c => c.Dispose(), Times.Once);
+        Assert.Equal(1, fakeConnection.OpenCount);
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_ThrowsOperationCanceledException_WhenCancellationRequested()
+    {
+        // Arrange
+        var cancellationToken = CreateCanceledToken();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => _sut.GetByIdAsync(Guid.NewGuid(), cancellationToken));
     }
 
     [Fact]
     public async Task GetRetryableEventsAsync_OpensConnection_WhenRetrievingRetryableEvents()
     {
         // Arrange
-        var mockConnection = new Mock<IDbConnection>();
-        mockConnection.Setup(c => c.Open())
-            .Verifiable();
+        var fakeConnection = new FakeDbConnection();
 
         _mockConnectionFactory
             .Setup(cf => cf.CreateConnection())
-            .Returns(mockConnection.Object);
+            .Returns(fakeConnection);
 
         var now = DateTimeOffset.UtcNow;
 
@@ -144,8 +176,18 @@ public class EventRepositoryTests
         var result = await _sut.GetRetryableEventsAsync(now);
 
         // Assert
-        mockConnection.Verify(c => c.Open(), Times.Once);
-        mockConnection.Verify(c => c.Dispose(), Times.Once);
+        Assert.Equal(1, fakeConnection.OpenCount);
+    }
+
+    [Fact]
+    public async Task GetRetryableEventsAsync_ThrowsOperationCanceledException_WhenCancellationRequested()
+    {
+        // Arrange
+        var cancellationToken = CreateCanceledToken();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => _sut.GetRetryableEventsAsync(DateTimeOffset.UtcNow, cancellationToken));
     }
 
     /// <summary>
@@ -163,5 +205,188 @@ public class EventRepositoryTests
             idempotencyKey: Guid.NewGuid().ToString(),
             correlationId: Guid.NewGuid(),
             payload: payload);
+    }
+
+    private static CancellationToken CreateCanceledToken()
+    {
+        var source = new CancellationTokenSource();
+        source.Cancel();
+        return source.Token;
+    }
+}
+
+internal sealed class FakeDbConnection : DbConnection
+{
+    private ConnectionState _state = ConnectionState.Closed;
+
+    public int OpenCount { get; private set; }
+
+    [AllowNull]
+    public override string ConnectionString { get; set; } = string.Empty;
+
+    public override string Database => "Fake";
+
+    public override string DataSource => "Fake";
+
+    public override string ServerVersion => "1.0";
+
+    public override ConnectionState State => _state;
+
+    public override void Open()
+    {
+        _state = ConnectionState.Open;
+        OpenCount += 1;
+    }
+
+    public override void Close() => _state = ConnectionState.Closed;
+
+    public override void ChangeDatabase(string databaseName) { }
+
+    protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel) => null!;
+
+    protected override DbCommand CreateDbCommand() => new FakeDbCommand(this);
+}
+
+internal sealed class FakeDbCommand : DbCommand
+{
+    private readonly DbConnection _connection;
+    private readonly DbParameterCollection _parameters = new FakeDbParameterCollection();
+
+    public FakeDbCommand(DbConnection connection)
+    {
+        _connection = connection;
+    }
+
+    [AllowNull]
+    public override string CommandText { get; set; } = string.Empty;
+
+    public override int CommandTimeout { get; set; }
+
+    public override CommandType CommandType { get; set; }
+
+    public override UpdateRowSource UpdatedRowSource { get; set; }
+
+    [AllowNull]
+    protected override DbConnection DbConnection
+    {
+        get => _connection;
+        set { }
+    }
+
+    protected override DbParameterCollection DbParameterCollection => _parameters;
+
+    protected override DbTransaction? DbTransaction { get; set; }
+
+    public override bool DesignTimeVisible { get; set; }
+
+    public override void Cancel() { }
+
+    public override int ExecuteNonQuery() => 1;
+
+    public override object? ExecuteScalar() => null;
+
+    public override void Prepare() { }
+
+    protected override DbParameter CreateDbParameter() => new FakeDbParameter();
+
+    protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior)
+        => new DataTable().CreateDataReader();
+
+    public override Task<int> ExecuteNonQueryAsync(CancellationToken cancellationToken)
+        => Task.FromResult(1);
+
+    public override Task<object?> ExecuteScalarAsync(CancellationToken cancellationToken)
+        => Task.FromResult<object?>(null);
+
+    protected override Task<DbDataReader> ExecuteDbDataReaderAsync(
+        CommandBehavior behavior,
+        CancellationToken cancellationToken)
+        => Task.FromResult<DbDataReader>(new DataTable().CreateDataReader());
+}
+
+internal sealed class FakeDbParameter : DbParameter
+{
+    public override DbType DbType { get; set; }
+
+    public override ParameterDirection Direction { get; set; }
+
+    public override bool IsNullable { get; set; }
+
+    [AllowNull]
+    public override string ParameterName { get; set; } = string.Empty;
+
+    [AllowNull]
+    public override string SourceColumn { get; set; } = string.Empty;
+
+    public override object? Value { get; set; }
+
+    public override bool SourceColumnNullMapping { get; set; }
+
+    public override int Size { get; set; }
+
+    public override void ResetDbType() { }
+}
+
+internal sealed class FakeDbParameterCollection : DbParameterCollection
+{
+    private readonly List<DbParameter> _parameters = new();
+
+    public override int Count => _parameters.Count;
+
+    public override object SyncRoot => ((ICollection)_parameters).SyncRoot;
+
+    public override int Add(object value)
+    {
+        _parameters.Add((DbParameter)value);
+        return _parameters.Count - 1;
+    }
+
+    public override void AddRange(Array values)
+    {
+        foreach (var value in values)
+            Add(value!);
+    }
+
+    public override void Clear() => _parameters.Clear();
+
+    public override bool Contains(object value) => _parameters.Contains((DbParameter)value);
+
+    public override bool Contains(string value) => _parameters.Any(p => p.ParameterName == value);
+
+    public override void CopyTo(Array array, int index) => _parameters.ToArray().CopyTo(array, index);
+
+    public override IEnumerator GetEnumerator() => _parameters.GetEnumerator();
+
+    public override int IndexOf(object value) => _parameters.IndexOf((DbParameter)value);
+
+    public override int IndexOf(string parameterName) => _parameters.FindIndex(p => p.ParameterName == parameterName);
+
+    public override void Insert(int index, object value) => _parameters.Insert(index, (DbParameter)value);
+
+    public override void Remove(object value) => _parameters.Remove((DbParameter)value);
+
+    public override void RemoveAt(int index) => _parameters.RemoveAt(index);
+
+    public override void RemoveAt(string parameterName)
+    {
+        var index = IndexOf(parameterName);
+        if (index >= 0)
+            RemoveAt(index);
+    }
+
+    protected override DbParameter GetParameter(int index) => _parameters[index];
+
+    protected override DbParameter GetParameter(string parameterName)
+        => _parameters.First(p => p.ParameterName == parameterName);
+
+    protected override void SetParameter(int index, DbParameter value) => _parameters[index] = value;
+
+    protected override void SetParameter(string parameterName, DbParameter value)
+    {
+        var index = IndexOf(parameterName);
+        if (index >= 0)
+            _parameters[index] = value;
+        else
+            _parameters.Add(value);
     }
 }
