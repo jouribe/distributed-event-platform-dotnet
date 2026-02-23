@@ -78,6 +78,156 @@ public sealed class EventRepository : IEventRepository
     }
 
     /// <summary>
+    /// Inserts multiple event envelopes into the database in a single batch operation.
+    /// </summary>
+    /// <param name="envelopes">The collection of event envelopes to insert.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A batch insert result containing success/conflict/error counts and per-event details.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="envelopes"/> is null.</exception>
+    public async Task<BatchInsertResult> BatchInsertAsync(IEnumerable<EventEnvelope> envelopes, CancellationToken cancellationToken = default)
+    {
+        if (envelopes == null)
+            throw new ArgumentNullException(nameof(envelopes));
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Materialize to array to enable batching and preserve order
+        var envelopeArray = envelopes.ToArray();
+
+        if (envelopeArray.Length == 0)
+        {
+            return new BatchInsertResult(
+                TotalSubmitted: 0,
+                SuccessCount: 0,
+                ConflictCount: 0,
+                ErrorCount: 0,
+                Details: Array.Empty<EventInsertDetail>());
+        }
+
+        const int batchSize = 1000;
+        var allDetails = new List<EventInsertDetail>(envelopeArray.Length);
+
+        // Process in chunks to respect PostgreSQL parameter limits (~65,000 / 12 fields ≈ 5,400)
+        for (int i = 0; i < envelopeArray.Length; i += batchSize)
+        {
+            var chunk = envelopeArray.Skip(i).Take(batchSize).ToArray();
+            var chunkDetails = await BatchInsertChunkAsync(chunk, cancellationToken);
+            allDetails.AddRange(chunkDetails);
+        }
+
+        var successCount = allDetails.Count(d => d.Outcome == EventInsertOutcome.Success);
+        var conflictCount = allDetails.Count(d => d.Outcome == EventInsertOutcome.Conflict);
+        var errorCount = allDetails.Count(d => d.Outcome == EventInsertOutcome.Error);
+
+        return new BatchInsertResult(
+            TotalSubmitted: envelopeArray.Length,
+            SuccessCount: successCount,
+            ConflictCount: conflictCount,
+            ErrorCount: errorCount,
+            Details: allDetails);
+    }
+
+    /// <summary>
+    /// Inserts a single chunk of events using PostgreSQL UNNEST for efficient batch operations.
+    /// </summary>
+    private async Task<IReadOnlyList<EventInsertDetail>> BatchInsertChunkAsync(
+        EventEnvelope[] chunk,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        // Build arrays for UNNEST
+        var ids = new Guid[chunk.Length];
+        var tenantIds = new string[chunk.Length];
+        var eventTypes = new string[chunk.Length];
+        var occurredAts = new DateTime[chunk.Length];
+        var receivedAts = new DateTime[chunk.Length];
+        var payloads = new string[chunk.Length];
+        var idempotencyKeys = new string[chunk.Length];
+        var correlationIds = new Guid[chunk.Length];
+        var statuses = new string[chunk.Length];
+        var attemptsArray = new int[chunk.Length];
+        var nextAttemptAts = new DateTime[chunk.Length]; // Use DateTime.MinValue as sentinel for null
+        var lastErrors = new string[chunk.Length]; // Use empty string as sentinel for null
+
+        for (int i = 0; i < chunk.Length; i++)
+        {
+            var envelope = chunk[i];
+            ids[i] = envelope.Id;
+            tenantIds[i] = envelope.TenantId;
+            eventTypes[i] = envelope.EventType;
+            occurredAts[i] = envelope.OccurredAt.UtcDateTime;
+            receivedAts[i] = envelope.ReceivedAt.UtcDateTime;
+            payloads[i] = envelope.Payload.RootElement.ToString();
+            idempotencyKeys[i] = envelope.IdempotencyKey ?? string.Empty; // Use empty string as sentinel for null
+            correlationIds[i] = envelope.CorrelationId;
+            statuses[i] = envelope.Status.ToString();
+            attemptsArray[i] = envelope.Attempts;
+            nextAttemptAts[i] = envelope.NextAttemptAt?.UtcDateTime ?? DateTime.MinValue; // Sentinel for null
+            lastErrors[i] = envelope.LastError ?? string.Empty; // Sentinel for null
+        }
+
+        var parameters = new
+        {
+            Ids = ids,
+            TenantIds = tenantIds,
+            EventTypes = eventTypes,
+            OccurredAts = occurredAts,
+            ReceivedAts = receivedAts,
+            Payloads = payloads,
+            IdempotencyKeys = idempotencyKeys,
+            CorrelationIds = correlationIds,
+            Statuses = statuses,
+            AttemptsArray = attemptsArray,
+            NextAttemptAts = nextAttemptAts,
+            LastErrors = lastErrors
+        };
+
+        var command = new CommandDefinition(
+            EventQueries.BatchInsertWithResults,
+            parameters,
+            commandTimeout: 60, // Longer timeout for batch operations
+            cancellationToken: cancellationToken);
+
+        try
+        {
+            var results = await connection.QueryAsync<BatchInsertResultRow>(command);
+            var resultDict = results.ToDictionary(r => r.Id, r => r.Outcome);
+
+            // Map results back to input order
+            var details = new List<EventInsertDetail>(chunk.Length);
+            foreach (var envelope in chunk)
+            {
+                if (resultDict.TryGetValue(envelope.Id, out var outcomeStr))
+                {
+                    var outcome = outcomeStr.Equals("Success", StringComparison.OrdinalIgnoreCase)
+                        ? EventInsertOutcome.Success
+                        : EventInsertOutcome.Conflict;
+
+                    details.Add(new EventInsertDetail(envelope.Id, outcome));
+                }
+                else
+                {
+                    // Should not happen with proper query, but handle defensively
+                    details.Add(new EventInsertDetail(envelope.Id, EventInsertOutcome.Error, "Result not returned from database"));
+                }
+            }
+
+            return details;
+        }
+        catch (Exception ex)
+        {
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
+    /// <summary>
     /// Updates the status of an event by its ID.
     /// </summary>
     /// <param name="eventId">The event ID.</param>
@@ -311,6 +461,15 @@ public sealed class EventRepository : IEventRepository
     }
 
     private static bool IsTimeout(Exception? exception) => exception is TimeoutException;
+
+    /// <summary>
+    /// Data transfer object for mapping batch insert results.
+    /// </summary>
+    private sealed class BatchInsertResultRow
+    {
+        public Guid Id { get; set; }
+        public string Outcome { get; set; } = null!;
+    }
 
     /// <summary>
     /// Data transfer object for mapping database rows to EventEnvelope entities.
