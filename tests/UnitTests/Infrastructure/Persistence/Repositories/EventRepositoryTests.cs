@@ -6,6 +6,7 @@ using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using EventPlatform.Domain.Events;
 using EventPlatform.Infrastructure.Persistence.DataAccess;
+using EventPlatform.Infrastructure.Persistence.Exceptions;
 using EventPlatform.Infrastructure.Persistence.Repositories;
 
 namespace EventPlatform.UnitTests.Infrastructure.Persistence.Repositories;
@@ -71,6 +72,39 @@ public class EventRepositoryTests
     }
 
     [Fact]
+    public async Task InsertAsync_ThrowsConflictException_WhenUniqueViolationOccurs()
+    {
+        // Arrange
+        var fakeConnection = CreateConnectionThatThrows(
+            CreateSqlStateException("23505", "events_tenant_id_idempotency_key_key"));
+
+        _mockConnectionFactory
+            .Setup(cf => cf.CreateConnection())
+            .Returns(fakeConnection);
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<EventRepositoryConflictException>(
+            () => _sut.InsertAsync(CreateValidEventEnvelope()));
+
+        Assert.Equal("events_tenant_id_idempotency_key_key", exception.ConstraintName);
+    }
+
+    [Fact]
+    public async Task InsertAsync_ThrowsTransientException_WhenDatabaseUnavailable()
+    {
+        // Arrange
+        var fakeConnection = CreateConnectionThatThrows(CreateSqlStateException("57P03"));
+
+        _mockConnectionFactory
+            .Setup(cf => cf.CreateConnection())
+            .Returns(fakeConnection);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<EventRepositoryTransientException>(
+            () => _sut.InsertAsync(CreateValidEventEnvelope()));
+    }
+
+    [Fact]
     public async Task UpdateStatusAsync_OpensConnection_WhenUpdatingStatus()
     {
         // Arrange
@@ -98,6 +132,21 @@ public class EventRepositoryTests
         // Act & Assert
         await Assert.ThrowsAsync<OperationCanceledException>(
             () => _sut.UpdateStatusAsync(Guid.NewGuid(), EventStatus.QUEUED, cancellationToken));
+    }
+
+    [Fact]
+    public async Task UpdateStatusAsync_ThrowsTransientException_WhenTimeoutOccurs()
+    {
+        // Arrange
+        var fakeConnection = CreateConnectionThatThrows(new TimeoutException("timeout"));
+
+        _mockConnectionFactory
+            .Setup(cf => cf.CreateConnection())
+            .Returns(fakeConnection);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<EventRepositoryTransientException>(
+            () => _sut.UpdateStatusAsync(Guid.NewGuid(), EventStatus.QUEUED));
     }
 
     [Fact]
@@ -213,6 +262,22 @@ public class EventRepositoryTests
         source.Cancel();
         return source.Token;
     }
+
+    private static FakeDbConnection CreateConnectionThatThrows(Exception exception)
+    {
+        return new FakeDbConnection { ExceptionToThrow = exception };
+    }
+
+    private static Exception CreateSqlStateException(string sqlState, string? constraintName = null)
+    {
+        var exception = new Exception("Database error");
+        exception.Data["SqlState"] = sqlState;
+
+        if (!string.IsNullOrWhiteSpace(constraintName))
+            exception.Data["ConstraintName"] = constraintName;
+
+        return exception;
+    }
 }
 
 internal sealed class FakeDbConnection : DbConnection
@@ -220,6 +285,8 @@ internal sealed class FakeDbConnection : DbConnection
     private ConnectionState _state = ConnectionState.Closed;
 
     public int OpenCount { get; private set; }
+
+    public Exception? ExceptionToThrow { get; set; }
 
     [AllowNull]
     public override string ConnectionString { get; set; } = string.Empty;
@@ -244,17 +311,19 @@ internal sealed class FakeDbConnection : DbConnection
 
     protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel) => null!;
 
-    protected override DbCommand CreateDbCommand() => new FakeDbCommand(this);
+    protected override DbCommand CreateDbCommand() => new FakeDbCommand(this, ExceptionToThrow);
 }
 
 internal sealed class FakeDbCommand : DbCommand
 {
     private readonly DbConnection _connection;
     private readonly DbParameterCollection _parameters = new FakeDbParameterCollection();
+    private readonly Exception? _exceptionToThrow;
 
-    public FakeDbCommand(DbConnection connection)
+    public FakeDbCommand(DbConnection connection, Exception? exceptionToThrow)
     {
         _connection = connection;
+        _exceptionToThrow = exceptionToThrow;
     }
 
     [AllowNull]
@@ -281,27 +350,53 @@ internal sealed class FakeDbCommand : DbCommand
 
     public override void Cancel() { }
 
-    public override int ExecuteNonQuery() => 1;
+    public override int ExecuteNonQuery()
+    {
+        ThrowIfConfigured();
+        return 1;
+    }
 
-    public override object? ExecuteScalar() => null;
+    public override object? ExecuteScalar()
+    {
+        ThrowIfConfigured();
+        return null;
+    }
 
     public override void Prepare() { }
 
     protected override DbParameter CreateDbParameter() => new FakeDbParameter();
 
     protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior)
-        => new DataTable().CreateDataReader();
+    {
+        ThrowIfConfigured();
+        return new DataTable().CreateDataReader();
+    }
 
     public override Task<int> ExecuteNonQueryAsync(CancellationToken cancellationToken)
-        => Task.FromResult(1);
+    {
+        ThrowIfConfigured();
+        return Task.FromResult(1);
+    }
 
     public override Task<object?> ExecuteScalarAsync(CancellationToken cancellationToken)
-        => Task.FromResult<object?>(null);
+    {
+        ThrowIfConfigured();
+        return Task.FromResult<object?>(null);
+    }
 
     protected override Task<DbDataReader> ExecuteDbDataReaderAsync(
         CommandBehavior behavior,
         CancellationToken cancellationToken)
-        => Task.FromResult<DbDataReader>(new DataTable().CreateDataReader());
+    {
+        ThrowIfConfigured();
+        return Task.FromResult<DbDataReader>(new DataTable().CreateDataReader());
+    }
+
+    private void ThrowIfConfigured()
+    {
+        if (_exceptionToThrow != null)
+            throw _exceptionToThrow;
+    }
 }
 
 internal sealed class FakeDbParameter : DbParameter
