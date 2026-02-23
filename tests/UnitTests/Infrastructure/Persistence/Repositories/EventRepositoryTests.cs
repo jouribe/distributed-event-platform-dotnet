@@ -222,10 +222,15 @@ public class EventRepositoryTests
         var now = DateTimeOffset.UtcNow;
 
         // Act
-        var result = await _sut.GetRetryableEventsAsync(now);
+        var result = await _sut.GetRetryableEventsAsync(now, pageSize: 1000, skip: 0);
 
         // Assert
         Assert.Equal(1, fakeConnection.OpenCount);
+        Assert.NotNull(result);
+        Assert.Equal(0, result.Count);
+        Assert.False(result.HasMore);
+        Assert.Equal(1000, result.PageSize);
+        Assert.Equal(0, result.Skip);
     }
 
     [Fact]
@@ -236,7 +241,23 @@ public class EventRepositoryTests
 
         // Act & Assert
         await Assert.ThrowsAsync<OperationCanceledException>(
-            () => _sut.GetRetryableEventsAsync(DateTimeOffset.UtcNow, cancellationToken));
+            () => _sut.GetRetryableEventsAsync(DateTimeOffset.UtcNow, cancellationToken: cancellationToken));
+    }
+
+    [Fact]
+    public async Task GetRetryableEventsAsync_ThrowsArgumentOutOfRangeException_WhenPageSizeIsInvalid()
+    {
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => _sut.GetRetryableEventsAsync(DateTimeOffset.UtcNow, pageSize: 0, skip: 0));
+    }
+
+    [Fact]
+    public async Task GetRetryableEventsAsync_ThrowsArgumentOutOfRangeException_WhenSkipIsNegative()
+    {
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => _sut.GetRetryableEventsAsync(DateTimeOffset.UtcNow, pageSize: 10, skip: -1));
     }
 
     /// <summary>

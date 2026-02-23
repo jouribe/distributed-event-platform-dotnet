@@ -187,14 +187,26 @@ public sealed class EventRepository : IEventRepository
     }
 
     /// <summary>
-    /// Retrieves all events with retryable status and a scheduled retry time <= the current time.
+    /// Retrieves retryable events with pagination metadata.
     /// </summary>
     /// <param name="now">The current time reference.</param>
+    /// <param name="pageSize">The maximum number of events to return.</param>
+    /// <param name="skip">The number of events to skip.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A collection of retryable event envelopes.</returns>
-    public async Task<IEnumerable<EventEnvelope>> GetRetryableEventsAsync(DateTimeOffset now, CancellationToken cancellationToken = default)
+    /// <returns>A paginated retryable event result with metadata.</returns>
+    public async Task<RetryableEventsPage> GetRetryableEventsAsync(
+        DateTimeOffset now,
+        int pageSize = 1000,
+        int skip = 0,
+        CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+
+        if (pageSize <= 0)
+            throw new ArgumentOutOfRangeException(nameof(pageSize), "Page size must be greater than zero.");
+
+        if (skip < 0)
+            throw new ArgumentOutOfRangeException(nameof(skip), "Skip cannot be negative.");
 
         using var connection = _connectionFactory.CreateConnection();
         connection.Open();
@@ -202,11 +214,13 @@ public sealed class EventRepository : IEventRepository
         var parameters = new
         {
             Status = EventStatus.FAILED_RETRYABLE.ToString(),
-            Now = now
+            Now = now,
+            Take = pageSize + 1,
+            Skip = skip
         };
 
         var command = new CommandDefinition(
-            EventQueries.GetRetryableEvents,
+            EventQueries.GetRetryableEventsPage,
             parameters,
             commandTimeout: 30,
             cancellationToken: cancellationToken);
@@ -214,8 +228,13 @@ public sealed class EventRepository : IEventRepository
         try
         {
             var results = await connection.QueryAsync<EventEnvelopeDto>(command);
+            var mappedResults = results.Select(dto => dto.ToEventEnvelope()).ToList();
+            var hasMore = mappedResults.Count > pageSize;
 
-            return results.Select(dto => dto.ToEventEnvelope()).ToList();
+            if (hasMore)
+                mappedResults.RemoveAt(mappedResults.Count - 1);
+
+            return new RetryableEventsPage(mappedResults, hasMore, skip, pageSize);
         }
         catch (Exception ex)
         {
