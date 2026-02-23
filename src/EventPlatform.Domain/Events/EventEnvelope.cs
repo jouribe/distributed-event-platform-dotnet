@@ -190,4 +190,53 @@ public sealed record EventEnvelope
             NextAttemptAt = null
         };
     }
+
+    /// <summary>
+    /// Rehydrates an event envelope from persistence (database).
+    /// This method is used by the repository layer to reconstruct domain entities from stored data.
+    /// </summary>
+    /// <param name="id">The event ID.</param>
+    /// <param name="eventType">The type of event.</param>
+    /// <param name="occurredAt">The timestamp when the event occurred.</param>
+    /// <param name="receivedAt">The timestamp when the event was received.</param>
+    /// <param name="source">The source system identifier.</param>
+    /// <param name="tenantId">The tenant ID.</param>
+    /// <param name="idempotencyKey">Optional idempotency key.</param>
+    /// <param name="correlationId">The correlation ID.</param>
+    /// <param name="payload">The event payload as JSON.</param>
+    /// <param name="status">The current event status.</param>
+    /// <param name="attempts">The number of processing attempts.</param>
+    /// <param name="nextAttemptAt">The scheduled time for the next retry attempt.</param>
+    /// <param name="lastError">The last error message, if any.</param>
+    /// <returns>A reconstructed EventEnvelope instance.</returns>
+    public static EventEnvelope RehydrateFromPersistence(
+        Guid id,
+        string eventType,
+        DateTimeOffset occurredAt,
+        DateTimeOffset receivedAt,
+        string source,
+        string tenantId,
+        string? idempotencyKey,
+        Guid correlationId,
+        JsonDocument payload,
+        EventStatus status,
+        int attempts,
+        DateTimeOffset? nextAttemptAt,
+        string? lastError)
+    {
+        return new EventEnvelope(
+            id: id,
+            eventType: eventType,
+            occurredAt: occurredAt,
+            receivedAt: receivedAt,
+            source: source,
+            tenantId: tenantId,
+            idempotencyKey: idempotencyKey,
+            correlationId: correlationId,
+            payload: payload,
+            status: status,
+            attempts: attempts,
+            nextAttemptAt: nextAttemptAt,
+            lastError: lastError);
+    }
 }
