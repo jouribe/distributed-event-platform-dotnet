@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/EventIngestion.Api/EventIngestion.Api.csproj" />
     <Project Path="src/EventPlatform.Application/EventPlatform.Application.csproj" />
+    <Project Path="src/EventPlatform.DbMigrator/EventPlatform.DbMigrator.csproj" />
     <Project Path="src/EventPlatform.Domain/EventPlatform.Domain.csproj" />
     <Project Path="src/EventPlatform.Infrastructure/EventPlatform.Infrastructure.csproj" />
     <Project Path="src/EventWorker/EventWorker.csproj" />
