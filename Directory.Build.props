@@ -2,11 +2,10 @@
   <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
     <CollectCoverage>true</CollectCoverage>
 
-    <!-- Force deterministic output -->
-    <CoverletOutput>$(MSBuildProjectDirectory)/coverage/</CoverletOutput>
+    <!-- Write a fixed file name per test project -->
+    <CoverletOutput>$(MSBuildProjectDirectory)/coverage/coverage.</CoverletOutput>
     <CoverletOutputFormat>cobertura</CoverletOutputFormat>
 
-    <!-- Coverage gate -->
     <ThresholdStat>total</ThresholdStat>
     <ThresholdType>line,branch</ThresholdType>
     <Threshold>70,50</Threshold>
