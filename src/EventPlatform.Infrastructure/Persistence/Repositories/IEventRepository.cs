@@ -17,6 +17,20 @@ public interface IEventRepository
     Task InsertAsync(EventEnvelope envelope, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Inserts multiple event envelopes into the database in a single batch operation.
+    /// </summary>
+    /// <param name="envelopes">The collection of event envelopes to insert.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A batch insert result containing success/conflict/error counts and per-event details.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="envelopes"/> is null.</exception>
+    /// <remarks>
+    /// This method provides high-throughput event ingestion by inserting multiple events in a single database round-trip.
+    /// Partial failures are supported: events with idempotency conflicts are reported as conflicts without failing the batch.
+    /// The order of details in the result matches the order of input envelopes.
+    /// </remarks>
+    Task<BatchInsertResult> BatchInsertAsync(IEnumerable<EventEnvelope> envelopes, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Updates the status of an event by its ID.
     /// </summary>
     /// <param name="eventId">The event ID.</param>

@@ -63,4 +63,71 @@ internal static class EventQueries
         ORDER BY next_attempt_at ASC, id ASC
         LIMIT @Take
         OFFSET @Skip";
+
+    /// <summary>
+    /// SQL query for batch insert with conflict detection and detailed results.
+    /// Uses PostgreSQL UNNEST for efficient multi-row insertion.
+    /// Returns the outcome for each input event (Success or Conflict).
+    /// </summary>
+    public const string BatchInsertWithResults = @"
+        WITH input_data AS (
+            SELECT
+                t.*,
+                row_number() OVER () as input_order
+            FROM UNNEST(
+                @Ids::uuid[],
+                @TenantIds::text[],
+                @EventTypes::text[],
+                @OccurredAts::timestamptz[],
+                @ReceivedAts::timestamptz[],
+                @Payloads::text[],
+                @IdempotencyKeys::text[],
+                @CorrelationIds::uuid[],
+                @Statuses::text[],
+                @AttemptsArray::integer[],
+                @NextAttemptAts::timestamptz[],
+                @LastErrors::text[]
+            ) AS t(
+                id, tenant_id, event_type, occurred_at, received_at,
+                payload, idempotency_key, correlation_id, status, attempts,
+                next_attempt_at, last_error
+            )
+        ),
+        normalized_data AS (
+            SELECT
+                id, tenant_id, event_type, occurred_at, received_at,
+                payload,
+                NULLIF(idempotency_key, '') as idempotency_key,
+                correlation_id, status, attempts,
+                NULLIF(next_attempt_at, '-infinity'::timestamptz) as next_attempt_at,
+                NULLIF(last_error, '') as last_error,
+                input_order
+            FROM input_data
+        ),
+        inserted AS (
+            INSERT INTO events (
+                id, tenant_id, event_type, occurred_at, received_at,
+                payload, idempotency_key, correlation_id, status, attempts,
+                next_attempt_at, last_error
+            )
+            SELECT
+                id, tenant_id, event_type, occurred_at, received_at,
+                payload::jsonb, idempotency_key, correlation_id, status, attempts,
+                next_attempt_at, last_error
+            FROM normalized_data
+            ON CONFLICT (tenant_id, idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+            DO NOTHING
+            RETURNING id
+        )
+        SELECT
+            n.id,
+            CASE
+                WHEN ins.id IS NOT NULL THEN 'Success'
+                WHEN n.idempotency_key IS NOT NULL THEN 'Conflict'
+                ELSE 'Success'
+            END as outcome
+        FROM normalized_data n
+        LEFT JOIN inserted ins ON n.id = ins.id
+        ORDER BY n.input_order;";
 }
