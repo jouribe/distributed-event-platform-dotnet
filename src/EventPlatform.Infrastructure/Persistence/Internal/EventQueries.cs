@@ -49,10 +49,10 @@ internal static class EventQueries
         LIMIT 1";
 
     /// <summary>
-    /// SQL query to retrieve all events with FAILED_RETRYABLE status
+    /// SQL query to retrieve paged events with FAILED_RETRYABLE status
     /// and next_attempt_at <= current time.
     /// </summary>
-    public const string GetRetryableEvents = @"
+    public const string GetRetryableEventsPage = @"
         SELECT
             id, tenant_id, event_type, occurred_at, received_at,
             payload, idempotency_key, correlation_id, status, attempts,
@@ -60,5 +60,7 @@ internal static class EventQueries
         FROM events
         WHERE status = @Status
           AND next_attempt_at <= @Now
-        ORDER BY next_attempt_at ASC";
+        ORDER BY next_attempt_at ASC, id ASC
+        LIMIT @Take
+        OFFSET @Skip";
 }

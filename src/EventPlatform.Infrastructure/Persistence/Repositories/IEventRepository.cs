@@ -42,10 +42,16 @@ public interface IEventRepository
     Task<EventEnvelope?> GetByIdAsync(Guid eventId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Retrieves all events with retryable status and a scheduled retry time <= the current time.
+    /// Retrieves retryable events with pagination metadata.
     /// </summary>
     /// <param name="now">The current time reference.</param>
+    /// <param name="pageSize">The maximum number of events to return. Defaults to 1000.</param>
+    /// <param name="skip">The number of events to skip. Defaults to 0.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A collection of retryable event envelopes.</returns>
-    Task<IEnumerable<EventEnvelope>> GetRetryableEventsAsync(DateTimeOffset now, CancellationToken cancellationToken = default);
+    /// <returns>A paginated retryable event result with metadata.</returns>
+    Task<RetryableEventsPage> GetRetryableEventsAsync(
+        DateTimeOffset now,
+        int pageSize = 1000,
+        int skip = 0,
+        CancellationToken cancellationToken = default);
 }
