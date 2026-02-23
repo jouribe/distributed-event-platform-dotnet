@@ -395,6 +395,187 @@ public sealed class EventRepository : IEventRepository
         }
     }
 
+    /// <summary>
+    /// Counts events by status, optionally filtered by tenant.
+    /// </summary>
+    /// <param name="status">The event status to count.</param>
+    /// <param name="tenantId">Optional tenant filter.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The number of events matching the criteria.</returns>
+    public async Task<long> GetCountAsync(
+        EventStatus status,
+        string? tenantId = null,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (tenantId is not null && string.IsNullOrWhiteSpace(tenantId))
+            throw new ArgumentException("TenantId cannot be blank when provided.", nameof(tenantId));
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        var parameters = new
+        {
+            Status = status.ToString(),
+            TenantId = tenantId
+        };
+
+        var command = new CommandDefinition(
+            EventQueries.GetCountByStatus,
+            parameters,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        try
+        {
+            return await connection.ExecuteScalarAsync<long>(command);
+        }
+        catch (Exception ex)
+        {
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Retrieves all events with the specified correlation ID.
+    /// </summary>
+    /// <param name="correlationId">The correlation ID.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The events associated with the correlation ID.</returns>
+    public async Task<IReadOnlyList<EventEnvelope>> GetByCorrelationIdAsync(
+        Guid correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (correlationId == Guid.Empty)
+            throw new ArgumentException("CorrelationId cannot be empty.", nameof(correlationId));
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        var parameters = new { CorrelationId = correlationId };
+
+        var command = new CommandDefinition(
+            EventQueries.GetByCorrelationId,
+            parameters,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        try
+        {
+            var results = await connection.QueryAsync<EventEnvelopeDto>(command);
+            return results.Select(dto => dto.ToEventEnvelope()).ToList();
+        }
+        catch (Exception ex)
+        {
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Retrieves events for a tenant with pagination.
+    /// </summary>
+    /// <param name="tenantId">The tenant ID.</param>
+    /// <param name="pageSize">The maximum number of events to return.</param>
+    /// <param name="skip">The number of events to skip.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The events for the tenant.</returns>
+    public async Task<IReadOnlyList<EventEnvelope>> GetByTenantIdAsync(
+        string tenantId,
+        int pageSize = 100,
+        int skip = 0,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrWhiteSpace(tenantId))
+            throw new ArgumentException("TenantId is required.", nameof(tenantId));
+
+        if (pageSize <= 0)
+            throw new ArgumentOutOfRangeException(nameof(pageSize), "Page size must be greater than zero.");
+
+        if (skip < 0)
+            throw new ArgumentOutOfRangeException(nameof(skip), "Skip cannot be negative.");
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        var parameters = new
+        {
+            TenantId = tenantId,
+            Take = pageSize,
+            Skip = skip
+        };
+
+        var command = new CommandDefinition(
+            EventQueries.GetByTenantIdPage,
+            parameters,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        try
+        {
+            var results = await connection.QueryAsync<EventEnvelopeDto>(command);
+            return results.Select(dto => dto.ToEventEnvelope()).ToList();
+        }
+        catch (Exception ex)
+        {
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Retrieves the single oldest retryable event eligible for processing.
+    /// </summary>
+    /// <param name="now">The current time reference.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The oldest retryable event, or null if none exist.</returns>
+    public async Task<EventEnvelope?> GetOldestRetryableAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        var parameters = new
+        {
+            Status = EventStatus.FAILED_RETRYABLE.ToString(),
+            Now = now
+        };
+
+        var command = new CommandDefinition(
+            EventQueries.GetOldestRetryable,
+            parameters,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        try
+        {
+            var result = await connection.QuerySingleOrDefaultAsync<EventEnvelopeDto>(command);
+            return result == null ? null : result.ToEventEnvelope();
+        }
+        catch (Exception ex)
+        {
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
     private static bool TryMapException(Exception exception, out Exception mapped)
     {
         if (TryMapSqlState(exception, out mapped))

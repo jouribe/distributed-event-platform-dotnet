@@ -68,4 +68,50 @@ public interface IEventRepository
         int pageSize = 1000,
         int skip = 0,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Counts events by status, optionally filtered by tenant.
+    /// </summary>
+    /// <param name="status">The event status to count.</param>
+    /// <param name="tenantId">Optional tenant filter.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The number of events matching the criteria.</returns>
+    Task<long> GetCountAsync(
+        EventStatus status,
+        string? tenantId = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves all events with the specified correlation ID.
+    /// </summary>
+    /// <param name="correlationId">The correlation ID.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The events associated with the correlation ID.</returns>
+    Task<IReadOnlyList<EventEnvelope>> GetByCorrelationIdAsync(
+        Guid correlationId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves events for a tenant with pagination.
+    /// </summary>
+    /// <param name="tenantId">The tenant ID.</param>
+    /// <param name="pageSize">The maximum number of events to return. Defaults to 100.</param>
+    /// <param name="skip">The number of events to skip. Defaults to 0.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The events for the tenant.</returns>
+    Task<IReadOnlyList<EventEnvelope>> GetByTenantIdAsync(
+        string tenantId,
+        int pageSize = 100,
+        int skip = 0,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves the single oldest retryable event eligible for processing.
+    /// </summary>
+    /// <param name="now">The current time reference.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The oldest retryable event, or null if none exist.</returns>
+    Task<EventEnvelope?> GetOldestRetryableAsync(
+        DateTimeOffset now,
+        CancellationToken cancellationToken = default);
 }
