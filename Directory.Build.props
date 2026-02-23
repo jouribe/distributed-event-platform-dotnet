@@ -1,10 +1,10 @@
 <Project>
-  <!-- Apply only to test projects -->
   <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
     <CollectCoverage>true</CollectCoverage>
 
-    <!-- Generate Coverage per test project -->
-    <CoverletOutputFormat>coverage</CoverletOutputFormat>
+    <!-- Force deterministic output -->
+    <CoverletOutput>$(MSBuildProjectDirectory)/coverage/</CoverletOutput>
+    <CoverletOutputFormat>cobertura</CoverletOutputFormat>
 
     <!-- Coverage gate -->
     <ThresholdStat>total</ThresholdStat>

@@ -55,7 +55,7 @@ jobs:
         shell: bash
         run: |
           reportgenerator \
-            -reports:"**/coverage.cobertura.xml" \
+            -reports:"**/coverage/coverage.cobertura.xml" \
             -targetdir:"coverage-report" \
             -reporttypes:"HtmlInline;MarkdownSummaryGithub;Cobertura"
           ls -la coverage-report
