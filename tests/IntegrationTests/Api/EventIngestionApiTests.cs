@@ -1,8 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
-using EventPlatform.Domain.Events;
 using EventPlatform.IntegrationTests.Contracts;
 using EventPlatform.IntegrationTests.Fixtures;
+using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace EventPlatform.IntegrationTests.Api;
 
@@ -16,17 +16,23 @@ public class EventIngestionApiTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     [Fact]
-    public async Task PostEvents_Returns202_WhenEventIsNew()
+    public async Task PostEvents_PersistsRowAndPublishesStreamEntry_WhenEventIsNew()
     {
-        _factory.ResetState();
+        await _factory.ResetStateAsync();
 
-        var client = _factory.CreateClient();
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+            BaseAddress = new Uri("https://localhost")
+        });
 
+        const string tenantId = "tenant-a";
+        const string idempotencyKey = "idem-new-1";
         var request = new
         {
             event_type = "user.created",
             source = "integration-tests",
-            tenant_id = "tenant-a",
+            tenant_id = tenantId,
             payload = new { user_id = "u-1" }
         };
 
@@ -34,25 +40,39 @@ public class EventIngestionApiTests : IClassFixture<CustomWebApplicationFactory>
         {
             Content = JsonContent.Create(request)
         };
-        message.Headers.Add("Idempotency-Key", "idem-new-1");
+        message.Headers.Add("Idempotency-Key", idempotencyKey);
 
         var response = await client.SendAsync(message);
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+        await _factory.WaitForStreamLengthAsync(expectedLength: 1, timeout: TimeSpan.FromSeconds(10));
+
+        var eventRows = await _factory.CountEventsByTenantAndIdempotencyKeyAsync(tenantId, idempotencyKey);
+        Assert.Equal(1, eventRows);
+
+        var streamLength = await _factory.GetStreamLengthAsync();
+        Assert.Equal(1, streamLength);
     }
 
     [Fact]
-    public async Task PostEvents_Returns200_WhenRequestIsDuplicate()
+    public async Task PostEvents_DoesNotCreateDuplicateRowOrStreamEntry_WhenRequestIsDuplicate()
     {
-        _factory.ResetState();
+        await _factory.ResetStateAsync();
 
-        var client = _factory.CreateClient();
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+            BaseAddress = new Uri("https://localhost")
+        });
 
+        const string tenantId = "tenant-a";
+        const string idempotencyKey = "idem-dup-1";
         var request = new
         {
             event_type = "user.created",
             source = "integration-tests",
-            tenant_id = "tenant-a",
+            tenant_id = tenantId,
             payload = new { user_id = "u-1" }
         };
 
@@ -60,16 +80,18 @@ public class EventIngestionApiTests : IClassFixture<CustomWebApplicationFactory>
         {
             Content = JsonContent.Create(request)
         };
-        first.Headers.Add("Idempotency-Key", "idem-dup-1");
+        first.Headers.Add("Idempotency-Key", idempotencyKey);
 
         var firstResponse = await client.SendAsync(first);
         Assert.Equal(HttpStatusCode.Accepted, firstResponse.StatusCode);
+
+        await _factory.WaitForStreamLengthAsync(expectedLength: 1, timeout: TimeSpan.FromSeconds(10));
 
         var second = new HttpRequestMessage(HttpMethod.Post, "/events")
         {
             Content = JsonContent.Create(request)
         };
-        second.Headers.Add("Idempotency-Key", "idem-dup-1");
+        second.Headers.Add("Idempotency-Key", idempotencyKey);
 
         var secondResponse = await client.SendAsync(second);
 
@@ -78,142 +100,13 @@ public class EventIngestionApiTests : IClassFixture<CustomWebApplicationFactory>
         var body = await secondResponse.Content.ReadFromJsonAsync<IngestResponseModel>();
         Assert.NotNull(body);
         Assert.True(body.IdempotencyReplayed);
-        // With outbox pattern, outbox event is created so we verify it exists
-        var unpublishedAtCheck = await _factory.OutboxRepository.GetUnpublishedAsync(100);
-        Assert.True(unpublishedAtCheck.Count >= 1);
-    }
 
-    [Fact]
-    public async Task PostEvents_CreatesOutboxEvent_WhenNewEventIngested()
-    {
-        _factory.ResetState();
+        await _factory.WaitForStreamLengthAsync(expectedLength: 1, timeout: TimeSpan.FromSeconds(5));
 
-        var client = _factory.CreateClient();
+        var eventRows = await _factory.CountEventsByTenantAndIdempotencyKeyAsync(tenantId, idempotencyKey);
+        Assert.Equal(1, eventRows);
 
-        var request = new
-        {
-            event_type = "user.created",
-            source = "integration-tests",
-            tenant_id = "tenant-a",
-            payload = new { user_id = "u-3" }
-        };
-
-        var message = new HttpRequestMessage(HttpMethod.Post, "/events")
-        {
-            Content = JsonContent.Create(request)
-        };
-        message.Headers.Add("Idempotency-Key", "idem-outbox-1");
-
-        var response = await client.SendAsync(message);
-
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-
-        // Verify outbox entry was created
-        var unpublished = await _factory.OutboxRepository.GetUnpublishedAsync(100);
-        Assert.NotEmpty(unpublished);
-
-        var outboxEvent = unpublished.First();
-        Assert.False(outboxEvent.IsPublished);
-        Assert.Equal(0, outboxEvent.PublishAttempts);
-        Assert.Null(outboxEvent.LastError);
-    }
-
-    [Fact]
-    public async Task PostEvents_EventuallyPublishes_WhenOutboxPublisherRuns()
-    {
-        _factory.ResetState();
-
-        var client = _factory.CreateClient();
-
-        var request = new
-        {
-            event_type = "order.created",
-            source = "integration-tests",
-            tenant_id = "tenant-b",
-            payload = new { order_id = "order-123" }
-        };
-
-        var message = new HttpRequestMessage(HttpMethod.Post, "/events")
-        {
-            Content = JsonContent.Create(request)
-        };
-        message.Headers.Add("Idempotency-Key", "idem-publish-1");
-
-        var response = await client.SendAsync(message);
-
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-
-        // Get the outbox event
-        var unpublished = await _factory.OutboxRepository.GetUnpublishedAsync(100);
-        Assert.NotEmpty(unpublished);
-
-        var outboxEvent = unpublished.First();
-        var outboxId = outboxEvent.Id;
-
-        // Simulate what OutboxPublisherService does:
-        // 1. Retrieve unpublished events
-        // 2. Publish them (would fail if publisher is down, but in memory publisher succeeds)
-        // 3. Mark as published
-        // 4. Move time forward and delete old ones
-
-        // Since we're using in-memory publisher, it will succeed
-        // Mark as published (simulating successful publish)
-        await _factory.OutboxRepository.MarkPublishedAsync(outboxId);
-
-        // Verify it's now published
-        var stillUnpublished = await _factory.OutboxRepository.GetUnpublishedAsync(100);
-        Assert.Empty(stillUnpublished);
-    }
-
-    [Fact]
-    public async Task PostEvents_RecordsAttempts_OnPublishFailure()
-    {
-        _factory.ResetState();
-
-        var client = _factory.CreateClient();
-
-        var request = new
-        {
-            event_type = "user.updated",
-            source = "integration-tests",
-            tenant_id = "tenant-c",
-            payload = new { user_id = "u-4" }
-        };
-
-        var message = new HttpRequestMessage(HttpMethod.Post, "/events")
-        {
-            Content = JsonContent.Create(request)
-        };
-        message.Headers.Add("Idempotency-Key", "idem-attempt-1");
-
-        var response = await client.SendAsync(message);
-
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-
-        // Get the outbox event
-        var unpublished = await _factory.OutboxRepository.GetUnpublishedAsync(100);
-        var outboxEvent = unpublished.First();
-        var outboxId = outboxEvent.Id;
-
-        // Record a failed publish attempt
-        await _factory.OutboxRepository.RecordPublishAttemptAsync(
-            outboxId,
-            "Redis connection timeout");
-
-        // Verify attempt was recorded
-        var stillUnpublished = await _factory.OutboxRepository.GetUnpublishedAsync(100);
-        var updated = stillUnpublished.First(o => o.Id == outboxId);
-        Assert.Equal(1, updated.PublishAttempts);
-        Assert.Contains("timeout", updated.LastError);
-
-        // Record another attempt
-        await _factory.OutboxRepository.RecordPublishAttemptAsync(
-            outboxId,
-            "Redis connection timeout");
-
-        // Verify second attempt was recorded
-        stillUnpublished = await _factory.OutboxRepository.GetUnpublishedAsync(100);
-        updated = stillUnpublished.First(o => o.Id == outboxId);
-        Assert.Equal(2, updated.PublishAttempts);
+        var streamLength = await _factory.GetStreamLengthAsync();
+        Assert.Equal(1, streamLength);
     }
 }

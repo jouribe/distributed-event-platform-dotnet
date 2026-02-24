@@ -14,7 +14,7 @@ internal static class OutboxQueries
             publish_attempts, last_error
         )
         VALUES (
-            @Id, @EventId, @StreamName, @Payload, @CreatedAt, @PublishedAt,
+            @Id, @EventId, @StreamName, @Payload::jsonb, @CreatedAt, @PublishedAt,
             @PublishAttempts, @LastError
         )";
 
@@ -23,8 +23,14 @@ internal static class OutboxQueries
     /// </summary>
     public const string GetUnpublished = @"
         SELECT
-            id, event_id, stream_name, payload, created_at, published_at,
-            publish_attempts, last_error
+            id AS Id,
+            event_id AS EventId,
+            stream_name AS StreamName,
+            payload AS Payload,
+            created_at AS CreatedAt,
+            published_at AS PublishedAt,
+            publish_attempts AS PublishAttempts,
+            last_error AS LastError
         FROM event_platform.outbox_events
         WHERE published_at IS NULL
         ORDER BY created_at ASC
