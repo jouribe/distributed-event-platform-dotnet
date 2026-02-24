@@ -55,7 +55,8 @@ public sealed class EventRepository : IEventRepository
             Status = envelope.Status.ToString(),
             envelope.Attempts,
             envelope.NextAttemptAt,
-            envelope.LastError
+            envelope.LastError,
+            envelope.Source
         };
 
         var command = new CommandDefinition(
@@ -111,7 +112,8 @@ public sealed class EventRepository : IEventRepository
                 Status = envelope.Status.ToString(),
                 envelope.Attempts,
                 envelope.NextAttemptAt,
-                envelope.LastError
+                envelope.LastError,
+                envelope.Source
             };
 
             var eventCommand = new CommandDefinition(
@@ -231,6 +233,7 @@ public sealed class EventRepository : IEventRepository
         var attemptsArray = new int[chunk.Length];
         var nextAttemptAts = new DateTime[chunk.Length]; // Use DateTime.MinValue as sentinel for null
         var lastErrors = new string[chunk.Length]; // Use empty string as sentinel for null
+        var sources = new string[chunk.Length];
 
         for (int i = 0; i < chunk.Length; i++)
         {
@@ -247,6 +250,7 @@ public sealed class EventRepository : IEventRepository
             attemptsArray[i] = envelope.Attempts;
             nextAttemptAts[i] = envelope.NextAttemptAt?.UtcDateTime ?? DateTime.MinValue; // Sentinel for null
             lastErrors[i] = envelope.LastError ?? string.Empty; // Sentinel for null
+            sources[i] = envelope.Source;
         }
 
         var parameters = new
@@ -262,7 +266,8 @@ public sealed class EventRepository : IEventRepository
             Statuses = statuses,
             AttemptsArray = attemptsArray,
             NextAttemptAts = nextAttemptAts,
-            LastErrors = lastErrors
+            LastErrors = lastErrors,
+            Sources = sources
         };
 
         var command = new CommandDefinition(
@@ -790,6 +795,7 @@ public sealed class EventRepository : IEventRepository
         public int Attempts { get; set; }
         public DateTimeOffset? NextAttemptAt { get; set; }
         public string? LastError { get; set; }
+        public string Source { get; set; } = null!;
 
         /// <summary>
         /// Converts this DTO to an EventEnvelope domain entity.
@@ -805,7 +811,7 @@ public sealed class EventRepository : IEventRepository
                 eventType: EventType,
                 occurredAt: OccurredAt,
                 receivedAt: ReceivedAt,
-                source: "PERSISTED", // Note: 'source' is not persisted; we use a marker value
+                source: Source,
                 tenantId: TenantId,
                 idempotencyKey: IdempotencyKey,
                 correlationId: CorrelationId,
