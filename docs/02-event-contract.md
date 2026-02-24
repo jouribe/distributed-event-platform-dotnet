@@ -17,6 +17,7 @@
 
 ## Required fields
 
+- `source`
 - `event_type`
 - `tenant_id`
 - `idempotency_key`
