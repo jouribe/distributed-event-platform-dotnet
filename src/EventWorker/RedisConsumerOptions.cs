@@ -17,4 +17,12 @@ public sealed class RedisConsumerOptions
     public int EmptyReadDelayMilliseconds { get; init; } = 250;
 
     public int ErrorDelayMilliseconds { get; init; } = 1000;
+
+    public int ConsumerGroupBootstrapInitialDelayMilliseconds { get; init; } = 500;
+
+    public int ConsumerGroupBootstrapMaxDelayMilliseconds { get; init; } = 10_000;
+
+    public double ConsumerGroupBootstrapBackoffFactor { get; init; } = 2.0;
+
+    public int ConsumerGroupBootstrapMaxRetryAttempts { get; init; }
 }

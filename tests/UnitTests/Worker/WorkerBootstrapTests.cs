@@ -9,7 +9,7 @@ namespace EventPlatform.UnitTests.Workers;
 public class WorkerBootstrapTests
 {
     [Fact]
-    public async Task ExecuteAsync_CreatesConsumerGroup_OnStartup()
+    public async Task ExecuteAsync_EnsuresConsumerGroupBootstrap_OnStartup()
     {
         var options = Options.Create(new RedisConsumerOptions
         {
@@ -18,40 +18,35 @@ public class WorkerBootstrapTests
             ConsumerName = "consumer-1"
         });
 
-        var database = new Mock<IDatabase>();
-        database
-            .Setup(d => d.StreamCreateConsumerGroupAsync(
-                options.Value.StreamName,
-                options.Value.GroupName,
-                "$",
-                true,
-                CommandFlags.None))
-            .ReturnsAsync(true);
+        var bootstrapper = new Mock<IRedisConsumerGroupBootstrapper>();
+        bootstrapper
+            .Setup(b => b.EnsureConsumerGroupAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
+        var database = new Mock<IDatabase>();
         var multiplexer = new Mock<IConnectionMultiplexer>();
         multiplexer
             .Setup(m => m.GetDatabase(It.IsAny<int>(), It.IsAny<object?>()))
             .Returns(database.Object);
 
-        var worker = new TestableWorker(NullLogger<EventWorker.Worker>.Instance, multiplexer.Object, options);
+        var worker = new TestableWorker(
+            NullLogger<EventWorker.Worker>.Instance,
+            multiplexer.Object,
+            bootstrapper.Object,
+            options);
 
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
         await worker.RunAsync(cancellation.Token);
 
-        database.Verify(
-            d => d.StreamCreateConsumerGroupAsync(
-                options.Value.StreamName,
-                options.Value.GroupName,
-                "$",
-                true,
-                CommandFlags.None),
+        bootstrapper.Verify(
+            b => b.EnsureConsumerGroupAsync(cancellation.Token),
             Times.Once);
     }
 
     [Fact]
-    public async Task ExecuteAsync_DoesNotThrow_WhenConsumerGroupAlreadyExists()
+    public async Task ExecuteAsync_PropagatesBootstrapExceptions()
     {
         var options = Options.Create(new RedisConsumerOptions
         {
@@ -60,27 +55,27 @@ public class WorkerBootstrapTests
             ConsumerName = "consumer-1"
         });
 
-        var database = new Mock<IDatabase>();
-        database
-            .Setup(d => d.StreamCreateConsumerGroupAsync(
-                options.Value.StreamName,
-                options.Value.GroupName,
-                "$",
-                true,
-                CommandFlags.None))
-            .ThrowsAsync(new RedisServerException("BUSYGROUP Consumer Group name already exists"));
+        var bootstrapper = new Mock<IRedisConsumerGroupBootstrapper>();
+        bootstrapper
+            .Setup(b => b.EnsureConsumerGroupAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("bootstrap failed"));
 
+        var database = new Mock<IDatabase>();
         var multiplexer = new Mock<IConnectionMultiplexer>();
         multiplexer
             .Setup(m => m.GetDatabase(It.IsAny<int>(), It.IsAny<object?>()))
             .Returns(database.Object);
 
-        var worker = new TestableWorker(NullLogger<EventWorker.Worker>.Instance, multiplexer.Object, options);
+        var worker = new TestableWorker(
+            NullLogger<EventWorker.Worker>.Instance,
+            multiplexer.Object,
+            bootstrapper.Object,
+            options);
 
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
-        await worker.RunAsync(cancellation.Token);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => worker.RunAsync(cancellation.Token));
     }
 
     private sealed class TestableWorker : EventWorker.Worker
@@ -88,8 +83,9 @@ public class WorkerBootstrapTests
         public TestableWorker(
             Microsoft.Extensions.Logging.ILogger<EventWorker.Worker> logger,
             IConnectionMultiplexer connectionMultiplexer,
+            IRedisConsumerGroupBootstrapper bootstrapper,
             IOptions<RedisConsumerOptions> options)
-            : base(logger, connectionMultiplexer, options)
+            : base(logger, connectionMultiplexer, bootstrapper, options)
         {
         }
 

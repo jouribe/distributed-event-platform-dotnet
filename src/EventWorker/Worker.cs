@@ -7,15 +7,18 @@ public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
     private readonly IConnectionMultiplexer _connectionMultiplexer;
+    private readonly IRedisConsumerGroupBootstrapper _bootstrapper;
     private readonly RedisConsumerOptions _options;
 
     public Worker(
         ILogger<Worker> logger,
         IConnectionMultiplexer connectionMultiplexer,
+        IRedisConsumerGroupBootstrapper bootstrapper,
         IOptions<RedisConsumerOptions> options)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _connectionMultiplexer = connectionMultiplexer ?? throw new ArgumentNullException(nameof(connectionMultiplexer));
+        _bootstrapper = bootstrapper ?? throw new ArgumentNullException(nameof(bootstrapper));
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
 
         if (string.IsNullOrWhiteSpace(_options.StreamName))
@@ -30,9 +33,9 @@ public class Worker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var database = _connectionMultiplexer.GetDatabase();
+        await _bootstrapper.EnsureConsumerGroupAsync(stoppingToken).ConfigureAwait(false);
 
-        await EnsureConsumerGroupAsync(database).ConfigureAwait(false);
+        var database = _connectionMultiplexer.GetDatabase();
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -77,32 +80,6 @@ public class Worker : BackgroundService
                 _logger.LogError(ex, "Error while consuming Redis stream entries.");
                 await Task.Delay(_options.ErrorDelayMilliseconds, stoppingToken).ConfigureAwait(false);
             }
-        }
-    }
-
-    private async Task EnsureConsumerGroupAsync(IDatabase database)
-    {
-        try
-        {
-            await database
-                .StreamCreateConsumerGroupAsync(
-                    _options.StreamName,
-                    _options.GroupName,
-                    "$",
-                    createStream: true)
-                .ConfigureAwait(false);
-
-            _logger.LogInformation(
-                "Created Redis consumer group {Group} for stream {Stream}.",
-                _options.GroupName,
-                _options.StreamName);
-        }
-        catch (RedisServerException ex) when (ex.Message.Contains("BUSYGROUP", StringComparison.OrdinalIgnoreCase))
-        {
-            _logger.LogInformation(
-                "Redis consumer group {Group} already exists for stream {Stream}.",
-                _options.GroupName,
-                _options.StreamName);
         }
     }
 }
