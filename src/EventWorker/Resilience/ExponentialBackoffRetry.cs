@@ -48,7 +48,9 @@ public static class ExponentialBackoffRetry
             }
             catch (Exception ex) when (isTransient(ex))
             {
-                if (maxRetryAttempts > 0 && attempt >= maxRetryAttempts)
+                var retriesPerformed = attempt - 1;
+
+                if (maxRetryAttempts > 0 && retriesPerformed >= maxRetryAttempts)
                 {
                     throw;
                 }

@@ -170,6 +170,72 @@ public class RedisConsumerGroupBootstrapperTests
         Assert.Equal(1, callCount);
     }
 
+    [Fact]
+    public async Task EnsureConsumerGroupAsync_WithMaxRetryAttemptsOne_RetriesOnceThenSucceeds()
+    {
+        var options = CreateOptions(maxRetryAttempts: 1);
+        var database = new Mock<IDatabase>();
+        database
+            .SetupSequence(d => d.StreamCreateConsumerGroupAsync(
+                options.Value.StreamName,
+                options.Value.GroupName,
+                "$",
+                true,
+                CommandFlags.None))
+            .ThrowsAsync(new RedisConnectionException(ConnectionFailureType.UnableToConnect, "redis unavailable"))
+            .ReturnsAsync(true);
+
+        var multiplexer = CreateMultiplexer(database.Object);
+        var sut = new RedisConsumerGroupBootstrapper(
+            NullLogger<RedisConsumerGroupBootstrapper>.Instance,
+            multiplexer.Object,
+            options);
+
+        await sut.EnsureConsumerGroupAsync(CancellationToken.None);
+
+        database.Verify(
+            d => d.StreamCreateConsumerGroupAsync(
+                options.Value.StreamName,
+                options.Value.GroupName,
+                "$",
+                true,
+                CommandFlags.None),
+            Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task EnsureConsumerGroupAsync_WithMaxRetryAttemptsOne_ThrowsAfterSecondFailure()
+    {
+        var options = CreateOptions(maxRetryAttempts: 1);
+        var database = new Mock<IDatabase>();
+        database
+            .SetupSequence(d => d.StreamCreateConsumerGroupAsync(
+                options.Value.StreamName,
+                options.Value.GroupName,
+                "$",
+                true,
+                CommandFlags.None))
+            .ThrowsAsync(new RedisConnectionException(ConnectionFailureType.UnableToConnect, "redis unavailable"))
+            .ThrowsAsync(new RedisTimeoutException("redis timeout", CommandStatus.Unknown));
+
+        var multiplexer = CreateMultiplexer(database.Object);
+        var sut = new RedisConsumerGroupBootstrapper(
+            NullLogger<RedisConsumerGroupBootstrapper>.Instance,
+            multiplexer.Object,
+            options);
+
+        await Assert.ThrowsAnyAsync<Exception>(() => sut.EnsureConsumerGroupAsync(CancellationToken.None));
+
+        database.Verify(
+            d => d.StreamCreateConsumerGroupAsync(
+                options.Value.StreamName,
+                options.Value.GroupName,
+                "$",
+                true,
+                CommandFlags.None),
+            Times.Exactly(2));
+    }
+
     private static OptionsWrapper<RedisConsumerOptions> CreateOptions(
         int maxRetryAttempts = 3,
         int initialDelayMs = 1,
