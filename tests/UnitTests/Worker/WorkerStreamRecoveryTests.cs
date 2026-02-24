@@ -136,7 +136,7 @@ public class WorkerStreamRecoveryTests
             bootstrapper.Object,
             options);
 
-        await Assert.ThrowsAsync<OperationCanceledException>(() => worker.RunAsync(cancellation.Token));
+        await worker.RunAsync(cancellation.Token);
 
         database.Verify(d => d.StreamAutoClaimAsync(
                 options.Value.StreamName,

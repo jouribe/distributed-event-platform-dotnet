@@ -12,7 +12,7 @@ public sealed class RedisConsumerOptions
 
     public string ConsumerName { get; init; } = $"{Environment.MachineName}-{Environment.ProcessId}";
 
-    public int ReadBatchSize { get; init; } = 10;
+    public int ReadBatchSize { get; init; }
 
     public int DrainOnStartupMaxBatches { get; init; } = 100;
 
@@ -24,7 +24,7 @@ public sealed class RedisConsumerOptions
 
     public int ReclaimIntervalMilliseconds { get; init; } = 30_000;
 
-    public int EmptyReadDelay { get; init; } = 250;
+    public int EmptyReadDelay { get; init; }
 
     public int ReadCount { get; init; } = 10;
 

@@ -34,11 +34,36 @@ public class Worker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await _bootstrapper.EnsureConsumerGroupAsync(stoppingToken).ConfigureAwait(false);
-
         var database = _connectionMultiplexer.GetDatabase();
-        await DrainPendingMessagesOnStartupAsync(database, stoppingToken).ConfigureAwait(false);
-        await ReclaimPendingMessagesAsync(database, "reclaim-startup", _options.DrainOnStartupMaxBatches, stoppingToken).ConfigureAwait(false);
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await _bootstrapper.EnsureConsumerGroupAsync(stoppingToken).ConfigureAwait(false);
+                await DrainPendingMessagesOnStartupAsync(database, stoppingToken).ConfigureAwait(false);
+                await ReclaimPendingMessagesAsync(database, "reclaim-startup", _options.DrainOnStartupMaxBatches, stoppingToken).ConfigureAwait(false);
+                break;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during worker startup recovery phase.");
+
+                if (!await DelayUnlessCancelledAsync(_options.ErrorDelayMilliseconds, stoppingToken).ConfigureAwait(false))
+                {
+                    return;
+                }
+            }
+        }
+
+        if (stoppingToken.IsCancellationRequested)
+        {
+            return;
+        }
 
         var nextReclaimAt = DateTimeOffset.UtcNow.AddMilliseconds(_options.ReclaimIntervalMilliseconds);
 
@@ -77,8 +102,25 @@ public class Worker : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error while consuming Redis stream entries.");
-                await Task.Delay(_options.ErrorDelayMilliseconds, stoppingToken).ConfigureAwait(false);
+
+                if (!await DelayUnlessCancelledAsync(_options.ErrorDelayMilliseconds, stoppingToken).ConfigureAwait(false))
+                {
+                    return;
+                }
             }
+        }
+    }
+
+    private static async Task<bool> DelayUnlessCancelledAsync(int delayMilliseconds, CancellationToken stoppingToken)
+    {
+        try
+        {
+            await Task.Delay(delayMilliseconds, stoppingToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return false;
         }
     }
 
