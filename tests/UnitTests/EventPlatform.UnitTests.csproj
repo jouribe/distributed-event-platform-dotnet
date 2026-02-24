@@ -24,6 +24,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\EventIngestion.Api\EventIngestion.Api.csproj" />
     <ProjectReference Include="..\..\src\EventPlatform.Domain\EventPlatform.Domain.csproj" />
     <ProjectReference Include="..\..\src\EventPlatform.Application\EventPlatform.Application.csproj" />
     <ProjectReference Include="..\..\src\EventPlatform.Infrastructure\EventPlatform.Infrastructure.csproj" />

@@ -1,6 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
+using EventPlatform.Application.Abstractions;
+using EventPlatform.Infrastructure.Messaging;
 using EventPlatform.Infrastructure.Persistence.DataAccess;
 using EventPlatform.Infrastructure.Persistence.Repositories;
+using StackExchange.Redis;
 
 namespace EventPlatform.Infrastructure;
 
@@ -32,6 +35,27 @@ public static class ServiceCollectionExtensions
 
         // Register the event repository as scoped
         services.AddScoped<IEventRepository, EventRepository>();
+
+        return services;
+    }
+
+    public static IServiceCollection AddInfrastructureRedisPublisher(
+        this IServiceCollection services,
+        string redisConnectionString,
+        string streamName)
+    {
+        if (services == null)
+            throw new ArgumentNullException(nameof(services));
+
+        if (string.IsNullOrWhiteSpace(redisConnectionString))
+            throw new ArgumentNullException(nameof(redisConnectionString), "Redis connection string cannot be null or empty");
+
+        if (string.IsNullOrWhiteSpace(streamName))
+            throw new ArgumentNullException(nameof(streamName), "Redis stream name cannot be null or empty");
+
+        services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisConnectionString));
+        services.AddSingleton(new RedisPublisherOptions { StreamName = streamName });
+        services.AddSingleton<IEventPublisher, RedisEventPublisher>();
 
         return services;
     }

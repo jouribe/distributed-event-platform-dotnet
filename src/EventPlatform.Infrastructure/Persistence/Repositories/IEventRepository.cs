@@ -55,6 +55,11 @@ public interface IEventRepository
     /// <returns>The event envelope, or null if not found.</returns>
     Task<EventEnvelope?> GetByIdAsync(Guid eventId, CancellationToken cancellationToken = default);
 
+    Task<EventEnvelope?> GetByTenantAndIdempotencyKeyAsync(
+        string tenantId,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Retrieves retryable events with pagination metadata.
     /// </summary>

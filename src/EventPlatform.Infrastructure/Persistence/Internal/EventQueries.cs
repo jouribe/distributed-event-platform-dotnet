@@ -48,6 +48,17 @@ internal static class EventQueries
         WHERE id = @EventId
         LIMIT 1";
 
+    public const string GetByTenantAndIdempotencyKey = @"
+        SELECT
+            id, tenant_id, event_type, occurred_at, received_at,
+            payload, idempotency_key, correlation_id, status, attempts,
+            next_attempt_at, last_error
+        FROM events
+        WHERE tenant_id = @TenantId
+          AND idempotency_key = @IdempotencyKey
+        ORDER BY received_at ASC
+        LIMIT 1";
+
     /// <summary>
     /// SQL query to retrieve paged events with FAILED_RETRYABLE status
     /// and next_attempt_at <= current time.

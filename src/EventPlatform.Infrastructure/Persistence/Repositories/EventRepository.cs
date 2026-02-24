@@ -336,6 +336,48 @@ public sealed class EventRepository : IEventRepository
         }
     }
 
+    public async Task<EventEnvelope?> GetByTenantAndIdempotencyKeyAsync(
+        string tenantId,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrWhiteSpace(tenantId))
+            throw new ArgumentException("TenantId cannot be null, empty, or whitespace.", nameof(tenantId));
+
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+            throw new ArgumentException("IdempotencyKey cannot be null, empty, or whitespace.", nameof(idempotencyKey));
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        var parameters = new
+        {
+            TenantId = tenantId,
+            IdempotencyKey = idempotencyKey
+        };
+
+        var command = new CommandDefinition(
+            EventQueries.GetByTenantAndIdempotencyKey,
+            parameters,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        try
+        {
+            var result = await connection.QuerySingleOrDefaultAsync<EventEnvelopeDto>(command);
+            return result == null ? null : result.ToEventEnvelope();
+        }
+        catch (Exception ex)
+        {
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
     /// <summary>
     /// Retrieves retryable events with pagination metadata.
     /// </summary>
