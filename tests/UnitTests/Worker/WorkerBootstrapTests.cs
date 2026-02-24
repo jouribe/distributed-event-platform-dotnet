@@ -29,14 +29,48 @@ public class WorkerBootstrapTests
             .Setup(m => m.GetDatabase(It.IsAny<int>(), It.IsAny<object?>()))
             .Returns(database.Object);
 
+        using var cancellation = new CancellationTokenSource();
+
+        database
+            .Setup(d => d.StreamReadGroupAsync(
+                options.Value.StreamName,
+                options.Value.GroupName,
+                options.Value.ConsumerName,
+                "0",
+                options.Value.ReadBatchSize,
+                false,
+                null,
+                CommandFlags.None))
+            .ReturnsAsync(Array.Empty<StreamEntry>());
+
+        database
+            .Setup(d => d.StreamAutoClaimAsync(
+                options.Value.StreamName,
+                options.Value.GroupName,
+                options.Value.ConsumerName,
+                options.Value.ClaimMinIdleTimeMilliseconds,
+                It.IsAny<RedisValue>(),
+                options.Value.ClaimBatchSize))
+            .ReturnsAsync(default(StreamAutoClaimResult));
+
+        database
+            .Setup(d => d.StreamReadGroupAsync(
+                options.Value.StreamName,
+                options.Value.GroupName,
+                options.Value.ConsumerName,
+                ">",
+                options.Value.ReadBatchSize,
+                false,
+                null,
+                CommandFlags.None))
+            .Callback(() => cancellation.Cancel())
+            .ReturnsAsync(Array.Empty<StreamEntry>());
+
         var worker = new TestableWorker(
             NullLogger<EventWorker.Worker>.Instance,
             multiplexer.Object,
             bootstrapper.Object,
             options);
-
-        using var cancellation = new CancellationTokenSource();
-        cancellation.Cancel();
 
         await worker.RunAsync(cancellation.Token);
 
