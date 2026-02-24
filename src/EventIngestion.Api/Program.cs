@@ -124,6 +124,29 @@ app.MapPost("/events", async (
         }
 
         IngestionMetrics.IdempotentReplayCount.Add(1);
+        if (existing.Status == EventStatus.RECEIVED)
+        {
+            try
+            {
+                await eventPublisher.PublishAsync(existing, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                IngestionMetrics.PublishFailures.Add(1);
+                logger.LogError(ex, "Failed to publish event to Redis stream during idempotent replay.");
+                return Results.StatusCode(StatusCodes.Status500InternalServerError);
+            }
+
+            await eventRepository.UpdateStatusAsync(existing.Id, EventStatus.QUEUED, cancellationToken);
+
+            logger.LogInformation("Idempotency replay recovered event and queued successfully.");
+
+            return Results.Ok(new IngestEventResponse(
+                EventId: existing.Id,
+                Status: EventStatus.QUEUED.ToString(),
+                IdempotencyReplayed: true));
+        }
+
         logger.LogInformation("Idempotency replay detected. Returning existing event without republish.");
 
         return Results.Ok(new IngestEventResponse(
