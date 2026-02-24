@@ -7,6 +7,7 @@ using EventPlatform.Infrastructure.Messaging;
 using EventPlatform.Infrastructure.Persistence.Exceptions;
 using EventPlatform.Infrastructure.Persistence.Repositories;
 using FluentValidation;
+using Microsoft.Extensions.Options;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -16,7 +17,11 @@ builder.Services.AddHttpsRedirection(options =>
 {
     options.HttpsPort = builder.Configuration.GetValue<int?>("HttpsRedirection:HttpsPort") ?? 7267;
 });
-builder.Services.Configure<IngestionOptions>(builder.Configuration.GetSection("Ingestion"));
+builder.Services.AddSingleton<IValidateOptions<IngestionOptions>, IngestionOptionsStartupValidator>();
+builder.Services
+    .AddOptions<IngestionOptions>()
+    .Bind(builder.Configuration.GetSection("Ingestion"))
+    .ValidateOnStart();
 builder.Services.AddScoped<IValidator<IngestEventCommand>, IngestEventCommandValidator>();
 
 var dbConnectionString =
@@ -29,13 +34,29 @@ var redisConnectionString =
     ?? builder.Configuration.GetConnectionString("EventPlatformRedis")
     ?? throw new InvalidOperationException("EVENTPLATFORM_REDIS or ConnectionStrings:EventPlatformRedis must be configured.");
 
-var streamName = builder.Configuration.GetValue<string>("Ingestion:RedisStreamName") ?? "events:ingress";
+var streamName = builder.Configuration.GetValue<string>("Ingestion:RedisStreamName");
+if (string.IsNullOrWhiteSpace(streamName))
+{
+    throw new InvalidOperationException("Invalid ingestion configuration: 'Ingestion:RedisStreamName' is required and cannot be empty.");
+}
+streamName = streamName.Trim();
 
 builder.Services.AddInfrastructurePersistence(dbConnectionString);
 builder.Services.AddInfrastructureRedisPublisher(redisConnectionString, streamName);
 builder.Services.AddOutboxPublisher(); // Register the outbox publisher service
 
 var app = builder.Build();
+
+try
+{
+    _ = app.Services.GetRequiredService<IOptions<IngestionOptions>>().Value;
+}
+catch (OptionsValidationException exception)
+{
+    var failureText = string.Join("; ", exception.Failures);
+    app.Logger.LogCritical(exception, "Invalid ingestion configuration. {ValidationFailures}", failureText);
+    throw;
+}
 
 if (app.Environment.IsDevelopment())
 {
