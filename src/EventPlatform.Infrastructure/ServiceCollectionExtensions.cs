@@ -1,6 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
+using EventPlatform.Application.Abstractions;
+using EventPlatform.Infrastructure.Messaging;
 using EventPlatform.Infrastructure.Persistence.DataAccess;
 using EventPlatform.Infrastructure.Persistence.Repositories;
+using StackExchange.Redis;
 
 namespace EventPlatform.Infrastructure;
 
@@ -32,6 +35,56 @@ public static class ServiceCollectionExtensions
 
         // Register the event repository as scoped
         services.AddScoped<IEventRepository, EventRepository>();
+
+        // Register the outbox repository as scoped
+        services.AddScoped<IOutboxRepository, OutboxRepository>();
+
+        return services;
+    }
+
+    public static IServiceCollection AddInfrastructureRedisPublisher(
+        this IServiceCollection services,
+        string redisConnectionString,
+        string streamName)
+    {
+        if (services == null)
+            throw new ArgumentNullException(nameof(services));
+
+        if (string.IsNullOrWhiteSpace(redisConnectionString))
+            throw new ArgumentNullException(nameof(redisConnectionString), "Redis connection string cannot be null or empty");
+
+        if (string.IsNullOrWhiteSpace(streamName))
+            throw new ArgumentNullException(nameof(streamName), "Redis stream name cannot be null or empty");
+
+        services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisConnectionString));
+        services.AddSingleton(new RedisPublisherOptions { StreamName = streamName });
+        services.AddSingleton<IEventPublisher, RedisEventPublisher>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the outbox publisher background service and its configuration options.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configureOptions">Optional delegate to configure OutboxPublisherOptions.</param>
+    /// <returns>The updated service collection.</returns>
+    public static IServiceCollection AddOutboxPublisher(
+        this IServiceCollection services,
+        Action<OutboxPublisherOptions>? configureOptions = null)
+    {
+        if (services == null)
+            throw new ArgumentNullException(nameof(services));
+
+        // Configure options with defaults
+        services.Configure<OutboxPublisherOptions>(options =>
+        {
+            if (configureOptions != null)
+                configureOptions(options);
+        });
+
+        // Register the hosted service
+        services.AddHostedService<OutboxPublisherService>();
 
         return services;
     }

@@ -16,6 +16,7 @@ This project adheres to Semantic Versioning.
 - Idempotent ingestion endpoint
 - Async worker processing
 - Retry mechanism with exponential backoff
+- Persist and rehydrate `source` field for improved traceability (#36)
 
 ---
 

@@ -55,7 +55,8 @@ public sealed class EventRepository : IEventRepository
             Status = envelope.Status.ToString(),
             envelope.Attempts,
             envelope.NextAttemptAt,
-            envelope.LastError
+            envelope.LastError,
+            envelope.Source
         };
 
         var command = new CommandDefinition(
@@ -78,8 +79,88 @@ public sealed class EventRepository : IEventRepository
     }
 
     /// <summary>
-    /// Inserts multiple event envelopes into the database in a single batch operation.
+    /// Inserts a new event envelope and its outbox record in a single atomic transaction.
     /// </summary>
+    public async Task InsertWithOutboxAsync(EventEnvelope envelope, OutboxEvent outboxEvent, CancellationToken cancellationToken = default)
+    {
+        if (envelope == null)
+            throw new ArgumentNullException(nameof(envelope));
+
+        if (outboxEvent == null)
+            throw new ArgumentNullException(nameof(outboxEvent));
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        using var transaction = connection.BeginTransaction();
+
+        try
+        {
+            // Insert event
+            var eventParameters = new
+            {
+                envelope.Id,
+                envelope.TenantId,
+                envelope.EventType,
+                envelope.OccurredAt,
+                envelope.ReceivedAt,
+                Payload = envelope.Payload.RootElement.ToString(),
+                envelope.IdempotencyKey,
+                envelope.CorrelationId,
+                Status = envelope.Status.ToString(),
+                envelope.Attempts,
+                envelope.NextAttemptAt,
+                envelope.LastError,
+                envelope.Source
+            };
+
+            var eventCommand = new CommandDefinition(
+                EventQueries.InsertEvent,
+                eventParameters,
+                transaction: transaction,
+                commandTimeout: 30,
+                cancellationToken: cancellationToken);
+
+            await connection.ExecuteAsync(eventCommand);
+
+            // Insert outbox event
+            var outboxParameters = new
+            {
+                outboxEvent.Id,
+                outboxEvent.EventId,
+                outboxEvent.StreamName,
+                Payload = outboxEvent.Payload.RootElement.ToString(),
+                outboxEvent.CreatedAt,
+                outboxEvent.PublishedAt,
+                outboxEvent.PublishAttempts,
+                outboxEvent.LastError
+            };
+
+            var outboxCommand = new CommandDefinition(
+                OutboxQueries.InsertOutboxEvent,
+                outboxParameters,
+                transaction: transaction,
+                commandTimeout: 30,
+                cancellationToken: cancellationToken);
+
+            await connection.ExecuteAsync(outboxCommand);
+
+            transaction.Commit();
+        }
+        catch (Exception ex)
+        {
+            transaction.Rollback();
+
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
+    /// <summary>
     /// <param name="envelopes">The collection of event envelopes to insert.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A batch insert result containing success/conflict/error counts and per-event details.</returns>
@@ -152,6 +233,7 @@ public sealed class EventRepository : IEventRepository
         var attemptsArray = new int[chunk.Length];
         var nextAttemptAts = new DateTime[chunk.Length]; // Use DateTime.MinValue as sentinel for null
         var lastErrors = new string[chunk.Length]; // Use empty string as sentinel for null
+        var sources = new string[chunk.Length];
 
         for (int i = 0; i < chunk.Length; i++)
         {
@@ -168,6 +250,7 @@ public sealed class EventRepository : IEventRepository
             attemptsArray[i] = envelope.Attempts;
             nextAttemptAts[i] = envelope.NextAttemptAt?.UtcDateTime ?? DateTime.MinValue; // Sentinel for null
             lastErrors[i] = envelope.LastError ?? string.Empty; // Sentinel for null
+            sources[i] = envelope.Source;
         }
 
         var parameters = new
@@ -183,7 +266,8 @@ public sealed class EventRepository : IEventRepository
             Statuses = statuses,
             AttemptsArray = attemptsArray,
             NextAttemptAts = nextAttemptAts,
-            LastErrors = lastErrors
+            LastErrors = lastErrors,
+            Sources = sources
         };
 
         var command = new CommandDefinition(
@@ -325,6 +409,48 @@ public sealed class EventRepository : IEventRepository
         {
             var result = await connection.QuerySingleOrDefaultAsync<EventEnvelopeDto>(command);
 
+            return result == null ? null : result.ToEventEnvelope();
+        }
+        catch (Exception ex)
+        {
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
+    public async Task<EventEnvelope?> GetByTenantAndIdempotencyKeyAsync(
+        string tenantId,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (string.IsNullOrWhiteSpace(tenantId))
+            throw new ArgumentException("TenantId cannot be null, empty, or whitespace.", nameof(tenantId));
+
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+            throw new ArgumentException("IdempotencyKey cannot be null, empty, or whitespace.", nameof(idempotencyKey));
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        var parameters = new
+        {
+            TenantId = tenantId,
+            IdempotencyKey = idempotencyKey
+        };
+
+        var command = new CommandDefinition(
+            EventQueries.GetByTenantAndIdempotencyKey,
+            parameters,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        try
+        {
+            var result = await connection.QuerySingleOrDefaultAsync<EventEnvelopeDto>(command);
             return result == null ? null : result.ToEventEnvelope();
         }
         catch (Exception ex)
@@ -669,6 +795,7 @@ public sealed class EventRepository : IEventRepository
         public int Attempts { get; set; }
         public DateTimeOffset? NextAttemptAt { get; set; }
         public string? LastError { get; set; }
+        public string Source { get; set; } = null!;
 
         /// <summary>
         /// Converts this DTO to an EventEnvelope domain entity.
@@ -684,7 +811,7 @@ public sealed class EventRepository : IEventRepository
                 eventType: EventType,
                 occurredAt: OccurredAt,
                 receivedAt: ReceivedAt,
-                source: "PERSISTED", // Note: 'source' is not persisted; we use a marker value
+                source: Source,
                 tenantId: TenantId,
                 idempotencyKey: IdempotencyKey,
                 correlationId: CorrelationId,

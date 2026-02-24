@@ -7,6 +7,7 @@ Table: events
 - event_type (text)
 - occurred_at (timestamptz)
 - received_at (timestamptz)
+- source (text)
 - payload (jsonb)
 - idempotency_key (text)
 - correlation_id (uuid)

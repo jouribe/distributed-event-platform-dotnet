@@ -1,11 +1,14 @@
 ﻿using DbUp;
 using DbUp.Engine;
+using Npgsql;
 using System.Text.RegularExpressions;
 
 var connectionString = Environment.GetEnvironmentVariable("EVENTPLATFORM_DB") ?? throw new InvalidOperationException("EVENTPLATFORM_DB environment variable is not set.");
 
 Console.WriteLine("Running database migration...");
 Console.WriteLine($"DB: {Redact(connectionString)}");
+
+EnsureSchemaExists(connectionString, "event_platform");
 
 var scriptsPath = Path.Combine(AppContext.BaseDirectory);
 var migrationScriptRegex = new Regex(@"^\d+_.+\.sql$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -30,6 +33,16 @@ if (!result.Successful)
 }
 
 Console.WriteLine("✅ Database migrations applied successfully.");
+
+static void EnsureSchemaExists(string connectionString, string schemaName)
+{
+    using var connection = new NpgsqlConnection(connectionString);
+    connection.Open();
+
+    using var command = connection.CreateCommand();
+    command.CommandText = $"CREATE SCHEMA IF NOT EXISTS \"{schemaName}\";";
+    command.ExecuteNonQuery();
+}
 
 static string Redact(string cs)
 {

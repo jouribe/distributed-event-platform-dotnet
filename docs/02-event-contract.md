@@ -17,6 +17,7 @@
 
 ## Required fields
 
+- `source`
 - `event_type`
 - `tenant_id`
 - `idempotency_key`
@@ -40,3 +41,37 @@
 - Reject unknown `event_type` values.
 - Reject empty or whitespace-only `tenant_id`.
 - Preserve original payload without shape mutation.
+
+## Response semantics
+
+For new events:
+
+- `202 Accepted`
+- Body:
+
+```json
+{
+  "event_id": "uuid",
+  "status": "QUEUED",
+  "idempotency_replayed": false
+}
+```
+
+For idempotent replay (`tenant_id` + `idempotency_key` already exists):
+
+- `200 OK`
+- Body:
+
+```json
+{
+  "event_id": "existing-uuid",
+  "status": "RECEIVED|QUEUED|...",
+  "idempotency_replayed": true
+}
+```
+
+## Header precedence
+
+- `Idempotency-Key` header has precedence over body `idempotency_key`.
+- `X-Correlation-Id` header has precedence over body `correlation_id`.
+- If `X-Correlation-Id` is present but invalid (not a UUID), it is ignored: use body `correlation_id` when valid, otherwise generate a new correlation id.

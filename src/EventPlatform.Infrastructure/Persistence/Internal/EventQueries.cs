@@ -12,12 +12,12 @@ internal static class EventQueries
         INSERT INTO events (
             id, tenant_id, event_type, occurred_at, received_at,
             payload, idempotency_key, correlation_id, status, attempts,
-            next_attempt_at, last_error
+            next_attempt_at, last_error, source
         )
         VALUES (
             @Id, @TenantId, @EventType, @OccurredAt, @ReceivedAt,
-            @Payload, @IdempotencyKey, @CorrelationId, @Status, @Attempts,
-            @NextAttemptAt, @LastError
+            @Payload::jsonb, @IdempotencyKey, @CorrelationId, @Status, @Attempts,
+            @NextAttemptAt, @LastError, @Source
         )";
 
     /// <summary>
@@ -41,11 +41,42 @@ internal static class EventQueries
     /// </summary>
     public const string GetById = @"
         SELECT
-            id, tenant_id, event_type, occurred_at, received_at,
-            payload, idempotency_key, correlation_id, status, attempts,
-            next_attempt_at, last_error
+            id AS Id,
+            tenant_id AS TenantId,
+            event_type AS EventType,
+            occurred_at AS OccurredAt,
+            received_at AS ReceivedAt,
+            payload AS Payload,
+            idempotency_key AS IdempotencyKey,
+            correlation_id AS CorrelationId,
+            status AS Status,
+            attempts AS Attempts,
+            next_attempt_at AS NextAttemptAt,
+            last_error AS LastError,
+            source AS Source
         FROM events
         WHERE id = @EventId
+        LIMIT 1";
+
+    public const string GetByTenantAndIdempotencyKey = @"
+        SELECT
+                        id AS Id,
+                        tenant_id AS TenantId,
+                        event_type AS EventType,
+                        occurred_at AS OccurredAt,
+                        received_at AS ReceivedAt,
+                        payload AS Payload,
+                        idempotency_key AS IdempotencyKey,
+                        correlation_id AS CorrelationId,
+                        status AS Status,
+                        attempts AS Attempts,
+                        next_attempt_at AS NextAttemptAt,
+                        last_error AS LastError,
+                        source AS Source
+        FROM events
+        WHERE tenant_id = @TenantId
+          AND idempotency_key = @IdempotencyKey
+        ORDER BY received_at ASC
         LIMIT 1";
 
     /// <summary>
@@ -54,9 +85,19 @@ internal static class EventQueries
     /// </summary>
     public const string GetRetryableEventsPage = @"
         SELECT
-            id, tenant_id, event_type, occurred_at, received_at,
-            payload, idempotency_key, correlation_id, status, attempts,
-            next_attempt_at, last_error
+                        id AS Id,
+                        tenant_id AS TenantId,
+                        event_type AS EventType,
+                        occurred_at AS OccurredAt,
+                        received_at AS ReceivedAt,
+                        payload AS Payload,
+                        idempotency_key AS IdempotencyKey,
+                        correlation_id AS CorrelationId,
+                        status AS Status,
+                        attempts AS Attempts,
+                        next_attempt_at AS NextAttemptAt,
+                        last_error AS LastError,
+                        source AS Source
         FROM events
         WHERE status = @Status
           AND next_attempt_at <= @Now
@@ -78,9 +119,19 @@ internal static class EventQueries
     /// </summary>
     public const string GetByCorrelationId = @"
         SELECT
-            id, tenant_id, event_type, occurred_at, received_at,
-            payload, idempotency_key, correlation_id, status, attempts,
-            next_attempt_at, last_error
+            id AS Id,
+            tenant_id AS TenantId,
+            event_type AS EventType,
+            occurred_at AS OccurredAt,
+            received_at AS ReceivedAt,
+            payload AS Payload,
+            idempotency_key AS IdempotencyKey,
+            correlation_id AS CorrelationId,
+            status AS Status,
+            attempts AS Attempts,
+            next_attempt_at AS NextAttemptAt,
+            last_error AS LastError,
+            source AS Source
         FROM events
         WHERE correlation_id = @CorrelationId
         ORDER BY received_at ASC, id ASC";
@@ -90,9 +141,19 @@ internal static class EventQueries
     /// </summary>
     public const string GetByTenantIdPage = @"
         SELECT
-            id, tenant_id, event_type, occurred_at, received_at,
-            payload, idempotency_key, correlation_id, status, attempts,
-            next_attempt_at, last_error
+            id AS Id,
+            tenant_id AS TenantId,
+            event_type AS EventType,
+            occurred_at AS OccurredAt,
+            received_at AS ReceivedAt,
+            payload AS Payload,
+            idempotency_key AS IdempotencyKey,
+            correlation_id AS CorrelationId,
+            status AS Status,
+            attempts AS Attempts,
+            next_attempt_at AS NextAttemptAt,
+            last_error AS LastError,
+            source AS Source
         FROM events
         WHERE tenant_id = @TenantId
         ORDER BY received_at DESC, id DESC
@@ -104,9 +165,19 @@ internal static class EventQueries
     /// </summary>
     public const string GetOldestRetryable = @"
         SELECT
-            id, tenant_id, event_type, occurred_at, received_at,
-            payload, idempotency_key, correlation_id, status, attempts,
-            next_attempt_at, last_error
+                        id AS Id,
+                        tenant_id AS TenantId,
+                        event_type AS EventType,
+                        occurred_at AS OccurredAt,
+                        received_at AS ReceivedAt,
+                        payload AS Payload,
+                        idempotency_key AS IdempotencyKey,
+                        correlation_id AS CorrelationId,
+                        status AS Status,
+                        attempts AS Attempts,
+                        next_attempt_at AS NextAttemptAt,
+                        last_error AS LastError,
+                        source AS Source
         FROM events
         WHERE status = @Status
           AND next_attempt_at <= @Now
@@ -135,11 +206,12 @@ internal static class EventQueries
                 @Statuses::text[],
                 @AttemptsArray::integer[],
                 @NextAttemptAts::timestamptz[],
-                @LastErrors::text[]
+                @LastErrors::text[],
+                @Sources::text[]
             ) AS t(
                 id, tenant_id, event_type, occurred_at, received_at,
                 payload, idempotency_key, correlation_id, status, attempts,
-                next_attempt_at, last_error
+                next_attempt_at, last_error, source
             )
         ),
         normalized_data AS (
@@ -150,6 +222,7 @@ internal static class EventQueries
                 correlation_id, status, attempts,
                 NULLIF(next_attempt_at, '-infinity'::timestamptz) as next_attempt_at,
                 NULLIF(last_error, '') as last_error,
+                source,
                 input_order
             FROM input_data
         ),
@@ -157,12 +230,12 @@ internal static class EventQueries
             INSERT INTO events (
                 id, tenant_id, event_type, occurred_at, received_at,
                 payload, idempotency_key, correlation_id, status, attempts,
-                next_attempt_at, last_error
+                next_attempt_at, last_error, source
             )
             SELECT
                 id, tenant_id, event_type, occurred_at, received_at,
                 payload::jsonb, idempotency_key, correlation_id, status, attempts,
-                next_attempt_at, last_error
+                next_attempt_at, last_error, source
             FROM normalized_data
             ON CONFLICT (tenant_id, idempotency_key)
             WHERE idempotency_key IS NOT NULL
