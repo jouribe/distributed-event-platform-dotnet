@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using EventPlatform.Domain.Events;
 using EventPlatform.IntegrationTests.Contracts;
 using EventPlatform.IntegrationTests.Fixtures;
 
@@ -77,6 +78,53 @@ public class EventIngestionApiTests : IClassFixture<CustomWebApplicationFactory>
         var body = await secondResponse.Content.ReadFromJsonAsync<IngestResponseModel>();
         Assert.NotNull(body);
         Assert.True(body.IdempotencyReplayed);
+        Assert.Equal(1, _factory.Publisher.PublishedCount);
+    }
+
+    [Fact]
+    public async Task PostEvents_ReplaysPublish_WhenConflictAndStatusReceived()
+    {
+        _factory.ResetState();
+        _factory.Publisher.FailNextPublish = true;
+
+        var client = _factory.CreateClient();
+
+        var request = new
+        {
+            event_type = "user.created",
+            source = "integration-tests",
+            tenant_id = "tenant-a",
+            payload = new { user_id = "u-2" }
+        };
+
+        var first = new HttpRequestMessage(HttpMethod.Post, "/events")
+        {
+            Content = JsonContent.Create(request)
+        };
+        first.Headers.Add("Idempotency-Key", "idem-retry-1");
+
+        var firstResponse = await client.SendAsync(first);
+        Assert.Equal(HttpStatusCode.InternalServerError, firstResponse.StatusCode);
+
+        var second = new HttpRequestMessage(HttpMethod.Post, "/events")
+        {
+            Content = JsonContent.Create(request)
+        };
+        second.Headers.Add("Idempotency-Key", "idem-retry-1");
+
+        var secondResponse = await client.SendAsync(second);
+
+        Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+
+        var body = await secondResponse.Content.ReadFromJsonAsync<IngestResponseModel>();
+        Assert.NotNull(body);
+        Assert.True(body.IdempotencyReplayed);
+        Assert.Equal(EventStatus.QUEUED.ToString(), body.Status);
+
+        var stored = await _factory.Repository.GetByTenantAndIdempotencyKeyAsync("tenant-a", "idem-retry-1");
+        Assert.NotNull(stored);
+        Assert.Equal(EventStatus.QUEUED, stored!.Status);
+        Assert.Equal(2, _factory.Publisher.PublishAttempts);
         Assert.Equal(1, _factory.Publisher.PublishedCount);
     }
 }
