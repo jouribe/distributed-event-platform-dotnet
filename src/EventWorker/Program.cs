@@ -24,6 +24,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(serviceProvider =>
 	return ConnectionMultiplexer.Connect(configurationOptions);
 });
 
+builder.Services.AddSingleton<IRedisConsumerGroupBootstrapper, RedisConsumerGroupBootstrapper>();
 builder.Services.AddHostedService<Worker>();
 
 var host = builder.Build();
