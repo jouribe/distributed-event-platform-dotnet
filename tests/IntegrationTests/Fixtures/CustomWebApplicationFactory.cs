@@ -67,6 +67,29 @@ WHERE tenant_id = @tenant_id AND idempotency_key = @idempotency_key;";
         return Convert.ToInt32(result);
     }
 
+    public async Task<Guid> GetCorrelationIdByTenantAndIdempotencyKeyAsync(string tenantId, string idempotencyKey)
+    {
+        await using var connection = new NpgsqlConnection(PostgresConnectionString);
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT correlation_id
+FROM event_platform.events
+WHERE tenant_id = @tenant_id AND idempotency_key = @idempotency_key
+LIMIT 1;";
+        command.Parameters.AddWithValue("tenant_id", tenantId);
+        command.Parameters.AddWithValue("idempotency_key", idempotencyKey);
+
+        var result = await command.ExecuteScalarAsync();
+        if (result is null || result is DBNull)
+        {
+            throw new InvalidOperationException("Expected event row was not found for tenant/idempotency key.");
+        }
+
+        return (Guid)result;
+    }
+
     public async Task<long> GetStreamLengthAsync()
     {
         var redis = _redisMultiplexer?.GetDatabase()

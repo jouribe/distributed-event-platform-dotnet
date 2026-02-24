@@ -74,3 +74,4 @@ For idempotent replay (`tenant_id` + `idempotency_key` already exists):
 
 - `Idempotency-Key` header has precedence over body `idempotency_key`.
 - `X-Correlation-Id` header has precedence over body `correlation_id`.
+- If `X-Correlation-Id` is present but invalid (not a UUID), it is ignored: use body `correlation_id` when valid, otherwise generate a new correlation id.
