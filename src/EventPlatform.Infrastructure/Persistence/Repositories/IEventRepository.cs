@@ -17,6 +17,18 @@ public interface IEventRepository
     Task InsertAsync(EventEnvelope envelope, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Inserts a new event envelope and its outbox record in a single atomic transaction.
+    /// Uses the Outbox pattern to ensure reliable event publishing: if the API crashes after inserting
+    /// the event but before publishing to Redis, the outbox will eventually publish the event.
+    /// </summary>
+    /// <param name="envelope">The event envelope to insert.</param>
+    /// <param name="outboxEvent">The outbox event to insert (should reference the envelope).</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="envelope"/> or <paramref name="outboxEvent"/> is null.</exception>
+    Task InsertWithOutboxAsync(EventEnvelope envelope, OutboxEvent outboxEvent, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Inserts multiple event envelopes into the database in a single batch operation.
     /// </summary>
     /// <param name="envelopes">The collection of event envelopes to insert.</param>

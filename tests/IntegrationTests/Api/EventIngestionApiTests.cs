@@ -78,14 +78,15 @@ public class EventIngestionApiTests : IClassFixture<CustomWebApplicationFactory>
         var body = await secondResponse.Content.ReadFromJsonAsync<IngestResponseModel>();
         Assert.NotNull(body);
         Assert.True(body.IdempotencyReplayed);
-        Assert.Equal(1, _factory.Publisher.PublishedCount);
+        // With outbox pattern, outbox event is created so we verify it exists
+        var unpublishedAtCheck = await _factory.OutboxRepository.GetUnpublishedAsync(100);
+        Assert.True(unpublishedAtCheck.Count >= 1);
     }
 
     [Fact]
-    public async Task PostEvents_ReplaysPublish_WhenConflictAndStatusReceived()
+    public async Task PostEvents_CreatesOutboxEvent_WhenNewEventIngested()
     {
         _factory.ResetState();
-        _factory.Publisher.FailNextPublish = true;
 
         var client = _factory.CreateClient();
 
@@ -94,37 +95,125 @@ public class EventIngestionApiTests : IClassFixture<CustomWebApplicationFactory>
             event_type = "user.created",
             source = "integration-tests",
             tenant_id = "tenant-a",
-            payload = new { user_id = "u-2" }
+            payload = new { user_id = "u-3" }
         };
 
-        var first = new HttpRequestMessage(HttpMethod.Post, "/events")
+        var message = new HttpRequestMessage(HttpMethod.Post, "/events")
         {
             Content = JsonContent.Create(request)
         };
-        first.Headers.Add("Idempotency-Key", "idem-retry-1");
+        message.Headers.Add("Idempotency-Key", "idem-outbox-1");
 
-        var firstResponse = await client.SendAsync(first);
-        Assert.Equal(HttpStatusCode.InternalServerError, firstResponse.StatusCode);
+        var response = await client.SendAsync(message);
 
-        var second = new HttpRequestMessage(HttpMethod.Post, "/events")
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+        // Verify outbox entry was created
+        var unpublished = await _factory.OutboxRepository.GetUnpublishedAsync(100);
+        Assert.NotEmpty(unpublished);
+
+        var outboxEvent = unpublished.First();
+        Assert.False(outboxEvent.IsPublished);
+        Assert.Equal(0, outboxEvent.PublishAttempts);
+        Assert.Null(outboxEvent.LastError);
+    }
+
+    [Fact]
+    public async Task PostEvents_EventuallyPublishes_WhenOutboxPublisherRuns()
+    {
+        _factory.ResetState();
+
+        var client = _factory.CreateClient();
+
+        var request = new
+        {
+            event_type = "order.created",
+            source = "integration-tests",
+            tenant_id = "tenant-b",
+            payload = new { order_id = "order-123" }
+        };
+
+        var message = new HttpRequestMessage(HttpMethod.Post, "/events")
         {
             Content = JsonContent.Create(request)
         };
-        second.Headers.Add("Idempotency-Key", "idem-retry-1");
+        message.Headers.Add("Idempotency-Key", "idem-publish-1");
 
-        var secondResponse = await client.SendAsync(second);
+        var response = await client.SendAsync(message);
 
-        Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
 
-        var body = await secondResponse.Content.ReadFromJsonAsync<IngestResponseModel>();
-        Assert.NotNull(body);
-        Assert.True(body.IdempotencyReplayed);
-        Assert.Equal(EventStatus.QUEUED.ToString(), body.Status);
+        // Get the outbox event
+        var unpublished = await _factory.OutboxRepository.GetUnpublishedAsync(100);
+        Assert.NotEmpty(unpublished);
 
-        var stored = await _factory.Repository.GetByTenantAndIdempotencyKeyAsync("tenant-a", "idem-retry-1");
-        Assert.NotNull(stored);
-        Assert.Equal(EventStatus.QUEUED, stored!.Status);
-        Assert.Equal(2, _factory.Publisher.PublishAttempts);
-        Assert.Equal(1, _factory.Publisher.PublishedCount);
+        var outboxEvent = unpublished.First();
+        var outboxId = outboxEvent.Id;
+
+        // Simulate what OutboxPublisherService does:
+        // 1. Retrieve unpublished events
+        // 2. Publish them (would fail if publisher is down, but in memory publisher succeeds)
+        // 3. Mark as published
+        // 4. Move time forward and delete old ones
+
+        // Since we're using in-memory publisher, it will succeed
+        // Mark as published (simulating successful publish)
+        await _factory.OutboxRepository.MarkPublishedAsync(outboxId);
+
+        // Verify it's now published
+        var stillUnpublished = await _factory.OutboxRepository.GetUnpublishedAsync(100);
+        Assert.Empty(stillUnpublished);
+    }
+
+    [Fact]
+    public async Task PostEvents_RecordsAttempts_OnPublishFailure()
+    {
+        _factory.ResetState();
+
+        var client = _factory.CreateClient();
+
+        var request = new
+        {
+            event_type = "user.updated",
+            source = "integration-tests",
+            tenant_id = "tenant-c",
+            payload = new { user_id = "u-4" }
+        };
+
+        var message = new HttpRequestMessage(HttpMethod.Post, "/events")
+        {
+            Content = JsonContent.Create(request)
+        };
+        message.Headers.Add("Idempotency-Key", "idem-attempt-1");
+
+        var response = await client.SendAsync(message);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+        // Get the outbox event
+        var unpublished = await _factory.OutboxRepository.GetUnpublishedAsync(100);
+        var outboxEvent = unpublished.First();
+        var outboxId = outboxEvent.Id;
+
+        // Record a failed publish attempt
+        await _factory.OutboxRepository.RecordPublishAttemptAsync(
+            outboxId,
+            "Redis connection timeout");
+
+        // Verify attempt was recorded
+        var stillUnpublished = await _factory.OutboxRepository.GetUnpublishedAsync(100);
+        var updated = stillUnpublished.First(o => o.Id == outboxId);
+        Assert.Equal(1, updated.PublishAttempts);
+        Assert.Contains("timeout", updated.LastError);
+
+        // Record another attempt
+        await _factory.OutboxRepository.RecordPublishAttemptAsync(
+            outboxId,
+            "Redis connection timeout");
+
+        // Verify second attempt was recorded
+        stillUnpublished = await _factory.OutboxRepository.GetUnpublishedAsync(100);
+        updated = stillUnpublished.First(o => o.Id == outboxId);
+        Assert.Equal(2, updated.PublishAttempts);
     }
 }

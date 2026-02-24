@@ -53,4 +53,35 @@ public sealed class RedisEventPublisher : IEventPublisher
 
         await database.StreamAddAsync(_options.StreamName, entries).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Publishes a pre-serialized event payload to a specified stream.
+    /// Used by the outbox publisher to handle event publishing with retry semantics.
+    /// </summary>
+    public async Task PublishToStreamAsync(
+        string streamName,
+        JsonDocument payload,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(streamName))
+            throw new ArgumentException("StreamName cannot be null or empty.", nameof(streamName));
+
+        if (payload is null)
+            throw new ArgumentNullException(nameof(payload));
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var database = _connectionMultiplexer.GetDatabase();
+        var message = JsonSerializer.Serialize(new
+        {
+            payload = payload.RootElement
+        });
+
+        var entries = new[]
+        {
+            new NameValueEntry("message", message)
+        };
+
+        await database.StreamAddAsync(streamName, entries).ConfigureAwait(false);
+    }
 }

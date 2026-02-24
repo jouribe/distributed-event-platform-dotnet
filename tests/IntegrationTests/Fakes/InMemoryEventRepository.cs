@@ -8,6 +8,7 @@ public sealed class InMemoryEventRepository : IEventRepository
 {
     private readonly Dictionary<string, EventEnvelope> _events = new(StringComparer.Ordinal);
     private readonly object _gate = new();
+    public IOutboxRepository? OutboxRepository { get; set; }
 
     public Task InsertAsync(EventEnvelope envelope, CancellationToken cancellationToken = default)
     {
@@ -29,6 +30,23 @@ public sealed class InMemoryEventRepository : IEventRepository
         }
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Inserts both event and outbox in memory (simulating transactional behavior).
+    /// </summary>
+    public async Task InsertWithOutboxAsync(EventEnvelope envelope, OutboxEvent outboxEvent, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Insert event first
+        await InsertAsync(envelope, cancellationToken);
+
+        // Insert outbox entry
+        if (OutboxRepository != null)
+        {
+            await OutboxRepository.InsertAsync(outboxEvent, cancellationToken);
+        }
     }
 
     public Task<BatchInsertResult> BatchInsertAsync(IEnumerable<EventEnvelope> envelopes, CancellationToken cancellationToken = default)

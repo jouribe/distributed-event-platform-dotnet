@@ -78,8 +78,87 @@ public sealed class EventRepository : IEventRepository
     }
 
     /// <summary>
-    /// Inserts multiple event envelopes into the database in a single batch operation.
+    /// Inserts a new event envelope and its outbox record in a single atomic transaction.
     /// </summary>
+    public async Task InsertWithOutboxAsync(EventEnvelope envelope, OutboxEvent outboxEvent, CancellationToken cancellationToken = default)
+    {
+        if (envelope == null)
+            throw new ArgumentNullException(nameof(envelope));
+
+        if (outboxEvent == null)
+            throw new ArgumentNullException(nameof(outboxEvent));
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        using var transaction = connection.BeginTransaction();
+
+        try
+        {
+            // Insert event
+            var eventParameters = new
+            {
+                envelope.Id,
+                envelope.TenantId,
+                envelope.EventType,
+                envelope.OccurredAt,
+                envelope.ReceivedAt,
+                Payload = envelope.Payload.RootElement.ToString(),
+                envelope.IdempotencyKey,
+                envelope.CorrelationId,
+                Status = envelope.Status.ToString(),
+                envelope.Attempts,
+                envelope.NextAttemptAt,
+                envelope.LastError
+            };
+
+            var eventCommand = new CommandDefinition(
+                EventQueries.InsertEvent,
+                eventParameters,
+                transaction: transaction,
+                commandTimeout: 30,
+                cancellationToken: cancellationToken);
+
+            await connection.ExecuteAsync(eventCommand);
+
+            // Insert outbox event
+            var outboxParameters = new
+            {
+                outboxEvent.Id,
+                outboxEvent.EventId,
+                outboxEvent.StreamName,
+                Payload = outboxEvent.Payload.RootElement.ToString(),
+                outboxEvent.CreatedAt,
+                outboxEvent.PublishedAt,
+                outboxEvent.PublishAttempts,
+                outboxEvent.LastError
+            };
+
+            var outboxCommand = new CommandDefinition(
+                OutboxQueries.InsertOutboxEvent,
+                outboxParameters,
+                transaction: transaction,
+                commandTimeout: 30,
+                cancellationToken: cancellationToken);
+
+            await connection.ExecuteAsync(outboxCommand);
+
+            transaction.Commit();
+        }
+        catch (Exception ex)
+        {
+            transaction.Rollback();
+
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
+    /// <summary>
     /// <param name="envelopes">The collection of event envelopes to insert.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A batch insert result containing success/conflict/error counts and per-event details.</returns>
