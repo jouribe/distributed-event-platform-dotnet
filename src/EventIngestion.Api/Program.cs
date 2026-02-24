@@ -3,6 +3,7 @@ using EventIngestion.Api.Ingestion;
 using EventPlatform.Application.Abstractions;
 using EventPlatform.Domain.Events;
 using EventPlatform.Infrastructure;
+using EventPlatform.Infrastructure.Messaging;
 using EventPlatform.Infrastructure.Persistence.Exceptions;
 using EventPlatform.Infrastructure.Persistence.Repositories;
 using FluentValidation;
@@ -32,6 +33,7 @@ var streamName = builder.Configuration.GetValue<string>("Ingestion:RedisStreamNa
 
 builder.Services.AddInfrastructurePersistence(dbConnectionString);
 builder.Services.AddInfrastructureRedisPublisher(redisConnectionString, streamName);
+builder.Services.AddOutboxPublisher(); // Register the outbox publisher service
 
 var app = builder.Build();
 
@@ -47,7 +49,6 @@ app.MapPost("/events", async (
     HttpRequest httpRequest,
     IValidator<IngestEventCommand> validator,
     IEventRepository eventRepository,
-    IEventPublisher eventPublisher,
     ILogger<Program> logger,
     CancellationToken cancellationToken) =>
 {
@@ -108,10 +109,25 @@ app.MapPost("/events", async (
 
     try
     {
-        await eventRepository.InsertAsync(envelope, cancellationToken);
+        // Insert event + outbox in a single atomic transaction
+        var outboxEvent = OutboxEvent.CreateNew(
+            id: Guid.NewGuid(),
+            eventId: command.EventId,
+            streamName: streamName,
+            payload: envelope.Payload);
+
+        await eventRepository.InsertWithOutboxAsync(envelope, outboxEvent, cancellationToken);
+
+        logger.LogInformation("Event ingested and queued via outbox pattern.");
+
+        return Results.Accepted(value: new IngestEventResponse(
+            EventId: envelope.Id,
+            Status: EventStatus.QUEUED.ToString(),
+            IdempotencyReplayed: false));
     }
     catch (EventRepositoryConflictException)
     {
+        // Idempotency key conflict - retrieve the existing event
         var existing = await eventRepository.GetByTenantAndIdempotencyKeyAsync(
             command.TenantId,
             command.IdempotencyKey,
@@ -124,22 +140,28 @@ app.MapPost("/events", async (
         }
 
         IngestionMetrics.IdempotentReplayCount.Add(1);
+
         if (existing.Status == EventStatus.RECEIVED)
         {
+            // Event exists but hasn't been published to the outbox yet
+            // Create an outbox entry to ensure it gets published
+            var outboxEvent = OutboxEvent.CreateNew(
+                id: Guid.NewGuid(),
+                eventId: existing.Id,
+                streamName: streamName,
+                payload: existing.Payload);
+
             try
             {
-                await eventPublisher.PublishAsync(existing, cancellationToken);
+                await eventRepository.InsertWithOutboxAsync(existing, outboxEvent, cancellationToken);
             }
-            catch (Exception ex)
+            catch (EventRepositoryConflictException)
             {
-                IngestionMetrics.PublishFailures.Add(1);
-                logger.LogError(ex, "Failed to publish event to Redis stream during idempotent replay.");
-                return Results.StatusCode(StatusCodes.Status500InternalServerError);
+                // Outbox creation conflict (rare) - just continue, the event will be published eventually
+                logger.LogWarning("Outbox entry already exists for idempotent replay of event {EventId}", existing.Id);
             }
 
-            await eventRepository.UpdateStatusAsync(existing.Id, EventStatus.QUEUED, cancellationToken);
-
-            logger.LogInformation("Idempotency replay recovered event and queued successfully.");
+            logger.LogInformation("Idempotency replay queued event for publishing.");
 
             return Results.Ok(new IngestEventResponse(
                 EventId: existing.Id,
@@ -154,26 +176,6 @@ app.MapPost("/events", async (
             Status: existing.Status.ToString(),
             IdempotencyReplayed: true));
     }
-
-    try
-    {
-        await eventPublisher.PublishAsync(envelope, cancellationToken);
-    }
-    catch (Exception ex)
-    {
-        IngestionMetrics.PublishFailures.Add(1);
-        logger.LogError(ex, "Failed to publish event to Redis stream.");
-        return Results.StatusCode(StatusCodes.Status500InternalServerError);
-    }
-
-    await eventRepository.UpdateStatusAsync(envelope.Id, EventStatus.QUEUED, cancellationToken);
-
-    logger.LogInformation("Event ingested and queued successfully.");
-
-    return Results.Accepted(value: new IngestEventResponse(
-        EventId: envelope.Id,
-        Status: EventStatus.QUEUED.ToString(),
-        IdempotencyReplayed: false));
 })
 .WithName("IngestEvent");
 
