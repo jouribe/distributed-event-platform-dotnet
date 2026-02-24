@@ -28,6 +28,7 @@
     <ProjectReference Include="..\..\src\EventPlatform.Domain\EventPlatform.Domain.csproj" />
     <ProjectReference Include="..\..\src\EventPlatform.Application\EventPlatform.Application.csproj" />
     <ProjectReference Include="..\..\src\EventPlatform.Infrastructure\EventPlatform.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\EventWorker\EventWorker.csproj" />
   </ItemGroup>
 
 </Project>
