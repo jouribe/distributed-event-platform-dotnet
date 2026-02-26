@@ -1,6 +1,10 @@
+using EventPlatform.Domain.Events;
+using EventPlatform.Infrastructure.Persistence.Repositories;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 using System.Diagnostics;
+using System.Text.Json;
 
 namespace EventWorker;
 
@@ -9,17 +13,20 @@ public class Worker : BackgroundService
     private readonly ILogger<Worker> _logger;
     private readonly IConnectionMultiplexer _connectionMultiplexer;
     private readonly IRedisConsumerGroupBootstrapper _bootstrapper;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly RedisConsumerOptions _options;
 
     public Worker(
         ILogger<Worker> logger,
         IConnectionMultiplexer connectionMultiplexer,
         IRedisConsumerGroupBootstrapper bootstrapper,
+        IServiceScopeFactory scopeFactory,
         IOptions<RedisConsumerOptions> options)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _connectionMultiplexer = connectionMultiplexer ?? throw new ArgumentNullException(nameof(connectionMultiplexer));
         _bootstrapper = bootstrapper ?? throw new ArgumentNullException(nameof(bootstrapper));
+        _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
 
         if (string.IsNullOrWhiteSpace(_options.StreamName))
@@ -334,14 +341,235 @@ public class Worker : BackgroundService
 
     protected virtual Task<bool> TryHandleEntryAsync(StreamEntry entry, string phase, CancellationToken stoppingToken)
     {
-        _logger.LogInformation(
-            "Consumed message {EntryId} from stream {Stream} (group: {Group}, consumer: {Consumer}, phase: {Phase})",
-            entry.Id,
-            _options.StreamName,
-            _options.GroupName,
-            _options.ConsumerName,
-            phase);
+        if (!TryResolveEventId(entry, out var eventId))
+        {
+            _logger.LogWarning(
+                "Processing stream entry {EntryId} without event_id metadata (phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer}). Status transitions will be skipped for this entry.",
+                entry.Id,
+                phase,
+                _options.StreamName,
+                _options.GroupName,
+                _options.ConsumerName);
 
-        return Task.FromResult(true);
+            return HandleEntryWithoutEventIdAsync(entry, phase, stoppingToken);
+        }
+
+        return HandleEntryWithPersistenceAsync(eventId, entry, phase, stoppingToken);
+    }
+
+    private async Task<bool> HandleEntryWithoutEventIdAsync(
+        StreamEntry entry,
+        string phase,
+        CancellationToken stoppingToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var eventHandler = scope.ServiceProvider.GetRequiredService<IWorkerEventHandler>();
+
+        try
+        {
+            await eventHandler
+                .HandleAsync(Guid.Empty, entry, phase, stoppingToken)
+                .ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "Processed entry {EntryId} without event_id metadata (phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                entry.Id,
+                phase,
+                _options.StreamName,
+                _options.GroupName,
+                _options.ConsumerName);
+
+            return true;
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Handler failed for entry {EntryId} without event_id metadata (phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                entry.Id,
+                phase,
+                _options.StreamName,
+                _options.GroupName,
+                _options.ConsumerName);
+
+            return false;
+        }
+    }
+
+    private async Task<bool> HandleEntryWithPersistenceAsync(
+        Guid eventId,
+        StreamEntry entry,
+        string phase,
+        CancellationToken stoppingToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var eventRepository = scope.ServiceProvider.GetRequiredService<IEventRepository>();
+        var eventHandler = scope.ServiceProvider.GetRequiredService<IWorkerEventHandler>();
+
+        try
+        {
+            await eventRepository
+                .UpdateStatusAsync(eventId, EventStatus.PROCESSING, stoppingToken)
+                .ConfigureAwait(false);
+
+            await eventRepository
+                .IncrementAttemptsAsync(eventId, stoppingToken)
+                .ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "Event {EventId} transitioned to PROCESSING (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                eventId,
+                entry.Id,
+                phase,
+                _options.StreamName,
+                _options.GroupName,
+                _options.ConsumerName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed to persist PROCESSING transition for event {EventId} (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                eventId,
+                entry.Id,
+                phase,
+                _options.StreamName,
+                _options.GroupName,
+                _options.ConsumerName);
+
+            return false;
+        }
+
+        try
+        {
+            await eventHandler
+                .HandleAsync(eventId, entry, phase, stoppingToken)
+                .ConfigureAwait(false);
+
+            await eventRepository
+                .UpdateStatusAsync(eventId, EventStatus.SUCCEEDED, stoppingToken)
+                .ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "Event {EventId} transitioned to SUCCEEDED (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                eventId,
+                entry.Id,
+                phase,
+                _options.StreamName,
+                _options.GroupName,
+                _options.ConsumerName);
+
+            return true;
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Handler execution failed for event {EventId}. Attempting to persist FAILED_RETRYABLE status (entry: {EntryId}, phase: {Phase})",
+                eventId,
+                entry.Id,
+                phase);
+
+            try
+            {
+                await eventRepository
+                    .UpdateStatusAsync(eventId, EventStatus.FAILED_RETRYABLE, stoppingToken)
+                    .ConfigureAwait(false);
+
+                _logger.LogInformation(
+                    "Event {EventId} transitioned to FAILED_RETRYABLE (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                    eventId,
+                    entry.Id,
+                    phase,
+                    _options.StreamName,
+                    _options.GroupName,
+                    _options.ConsumerName);
+
+                return true;
+            }
+            catch (Exception persistenceEx)
+            {
+                _logger.LogError(
+                    persistenceEx,
+                    "Failed to persist FAILED_RETRYABLE transition for event {EventId} after handler error (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                    eventId,
+                    entry.Id,
+                    phase,
+                    _options.StreamName,
+                    _options.GroupName,
+                    _options.ConsumerName);
+
+                return false;
+            }
+        }
+    }
+
+    private static bool TryResolveEventId(StreamEntry entry, out Guid eventId)
+    {
+        eventId = default;
+
+        if (TryGetStringField(entry, "event_id", out var eventIdRaw)
+            && Guid.TryParse(eventIdRaw, out eventId))
+        {
+            return true;
+        }
+
+        if (!TryGetStringField(entry, "message", out var messageRaw)
+            || string.IsNullOrWhiteSpace(messageRaw))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var json = JsonDocument.Parse(messageRaw);
+            if (!json.RootElement.TryGetProperty("event_id", out var eventIdProperty))
+            {
+                return false;
+            }
+
+            if (eventIdProperty.ValueKind == JsonValueKind.String
+                && Guid.TryParse(eventIdProperty.GetString(), out eventId))
+            {
+                return true;
+            }
+
+            return eventIdProperty.ValueKind == JsonValueKind.Object
+                && Guid.TryParse(eventIdProperty.GetRawText(), out eventId);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryGetStringField(StreamEntry entry, string fieldName, out string value)
+    {
+        value = string.Empty;
+
+        foreach (var field in entry.Values)
+        {
+            if (!field.Name.IsNullOrEmpty
+                && string.Equals(field.Name.ToString(), fieldName, StringComparison.OrdinalIgnoreCase))
+            {
+                if (field.Value.IsNull)
+                {
+                    return false;
+                }
+
+                value = field.Value.ToString();
+                return true;
+            }
+        }
+
+        return false;
     }
 }
