@@ -344,17 +344,60 @@ public class Worker : BackgroundService
         if (!TryResolveEventId(entry, out var eventId))
         {
             _logger.LogWarning(
-                "Skipping stream entry {EntryId} because event_id is missing or invalid (phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                "Processing stream entry {EntryId} without event_id metadata (phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer}). Status transitions will be skipped for this entry.",
                 entry.Id,
                 phase,
                 _options.StreamName,
                 _options.GroupName,
                 _options.ConsumerName);
 
-            return Task.FromResult(false);
+            return HandleEntryWithoutEventIdAsync(entry, phase, stoppingToken);
         }
 
         return HandleEntryWithPersistenceAsync(eventId, entry, phase, stoppingToken);
+    }
+
+    private async Task<bool> HandleEntryWithoutEventIdAsync(
+        StreamEntry entry,
+        string phase,
+        CancellationToken stoppingToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var eventHandler = scope.ServiceProvider.GetRequiredService<IWorkerEventHandler>();
+
+        try
+        {
+            await eventHandler
+                .HandleAsync(Guid.Empty, entry, phase, stoppingToken)
+                .ConfigureAwait(false);
+
+            _logger.LogInformation(
+                "Processed entry {EntryId} without event_id metadata (phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                entry.Id,
+                phase,
+                _options.StreamName,
+                _options.GroupName,
+                _options.ConsumerName);
+
+            return true;
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Handler failed for entry {EntryId} without event_id metadata (phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                entry.Id,
+                phase,
+                _options.StreamName,
+                _options.GroupName,
+                _options.ConsumerName);
+
+            return false;
+        }
     }
 
     private async Task<bool> HandleEntryWithPersistenceAsync(

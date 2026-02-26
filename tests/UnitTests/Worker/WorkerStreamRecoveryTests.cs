@@ -407,6 +407,86 @@ public class WorkerStreamRecoveryTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_Acks_WhenMessageHasPayloadWithoutEventId_AndHandlerSucceeds()
+    {
+        var options = CreateOptions(new RedisConsumerOptions
+        {
+            StreamName = "events:ingress",
+            GroupName = "event-worker",
+            ConsumerName = "consumer-1",
+            ReadBatchSize = 1,
+            EmptyReadDelay = 1,
+            ErrorDelayMilliseconds = 1,
+            DrainOnStartupMaxBatches = 0,
+            DrainOnStartupMaxMessages = 0,
+            ReclaimIntervalMilliseconds = 60_000
+        });
+
+        var bootstrapper = CreateBootstrapper();
+        var database = new Mock<IDatabase>();
+        var eventRepository = new Mock<IEventRepository>();
+        var eventHandler = new Mock<IWorkerEventHandler>();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.CancelAfter(TimeSpan.FromSeconds(2));
+
+        eventHandler
+            .Setup(h => h.HandleAsync(It.IsAny<Guid>(), It.IsAny<StreamEntry>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        database
+            .SetupSequence(d => d.StreamReadGroupAsync(
+                options.Value.StreamName,
+                options.Value.GroupName,
+                options.Value.ConsumerName,
+                ">",
+                options.Value.ReadBatchSize,
+                false,
+                null,
+                CommandFlags.None))
+            .ReturnsAsync(new[]
+            {
+                new StreamEntry("1700000000000-0", new[]
+                {
+                    new NameValueEntry("message", "{\"payload\":{\"user_id\":\"u-1\"}}")
+                })
+            })
+            .Returns(() =>
+            {
+                cancellation.Cancel();
+                return Task.FromResult(Array.Empty<StreamEntry>());
+            });
+
+        var worker = new TestableWorker(
+            NullLogger<EventWorker.Worker>.Instance,
+            CreateMultiplexer(database.Object).Object,
+            bootstrapper.Object,
+            CreateScopeFactory(eventRepository, eventHandler),
+            options);
+
+        await worker.RunAsync(cancellation.Token);
+
+        eventHandler.Verify(h => h.HandleAsync(
+                Guid.Empty,
+                It.IsAny<StreamEntry>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        eventRepository.Verify(r => r.UpdateStatusAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<EventStatus>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        database.Verify(d => d.StreamAcknowledgeAsync(
+                options.Value.StreamName,
+                options.Value.GroupName,
+                It.IsAny<RedisValue>(),
+                CommandFlags.None),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_FallsBackToPendingAndClaim_WhenAutoClaimIsUnsupported()
     {
         var options = CreateOptions(new RedisConsumerOptions
