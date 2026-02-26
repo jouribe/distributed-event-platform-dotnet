@@ -1,4 +1,5 @@
 using EventWorker;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
@@ -52,6 +53,7 @@ public sealed class WorkerRedisRecoveryIntegrationTests : IAsyncLifetime
                 EmptyReadDelay = 10,
                 ErrorDelayMilliseconds = 10
             }),
+            CreateScopeFactory(),
             onHandled: null);
 
         var workerTask = worker.RunAsync(cancellation.Token);
@@ -113,6 +115,7 @@ public sealed class WorkerRedisRecoveryIntegrationTests : IAsyncLifetime
                 EmptyReadDelay = 10,
                 ErrorDelayMilliseconds = 10
             }),
+            CreateScopeFactory(),
             onHandled: null);
 
         var workerTask = worker.RunAsync(cancellation.Token);
@@ -173,13 +176,17 @@ public sealed class WorkerRedisRecoveryIntegrationTests : IAsyncLifetime
     {
         private readonly Action<StreamEntry>? _onHandled;
 
+        private static IServiceScopeFactory CreateDefaultScopeFactory()
+            => new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+
         public TestableWorker(
             Microsoft.Extensions.Logging.ILogger<EventWorker.Worker> logger,
             IConnectionMultiplexer connectionMultiplexer,
             IRedisConsumerGroupBootstrapper bootstrapper,
             IOptions<RedisConsumerOptions> options,
+            IServiceScopeFactory? scopeFactory,
             Action<StreamEntry>? onHandled)
-            : base(logger, connectionMultiplexer, bootstrapper, options)
+            : base(logger, connectionMultiplexer, bootstrapper, scopeFactory ?? CreateDefaultScopeFactory(), options)
         {
             _onHandled = onHandled;
         }
@@ -193,4 +200,7 @@ public sealed class WorkerRedisRecoveryIntegrationTests : IAsyncLifetime
             return Task.FromResult(true);
         }
     }
+
+    private static IServiceScopeFactory CreateScopeFactory()
+        => new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 }

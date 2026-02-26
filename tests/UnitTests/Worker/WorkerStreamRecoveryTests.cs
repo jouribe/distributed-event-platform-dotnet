@@ -1,4 +1,7 @@
 using EventWorker;
+using EventPlatform.Domain.Events;
+using EventPlatform.Infrastructure.Persistence.Repositories;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -68,6 +71,7 @@ public class WorkerStreamRecoveryTests
             NullLogger<EventWorker.Worker>.Instance,
             CreateMultiplexer(database.Object).Object,
             bootstrapper.Object,
+            CreateScopeFactory(),
             options);
 
         await worker.RunAsync(cancellation.Token);
@@ -134,6 +138,7 @@ public class WorkerStreamRecoveryTests
             NullLogger<EventWorker.Worker>.Instance,
             CreateMultiplexer(database.Object).Object,
             bootstrapper.Object,
+            CreateScopeFactory(),
             options);
 
         await worker.RunAsync(cancellation.Token);
@@ -208,6 +213,7 @@ public class WorkerStreamRecoveryTests
             NullLogger<EventWorker.Worker>.Instance,
             CreateMultiplexer(database.Object).Object,
             bootstrapper.Object,
+            CreateScopeFactory(),
             options);
 
         await worker.RunAsync(cancellation.Token);
@@ -225,7 +231,7 @@ public class WorkerStreamRecoveryTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_DoesNotAck_WhenHandlerFails()
+    public async Task ExecuteAsync_PersistsProcessingAndSucceeded_ThenAcksMessage()
     {
         var options = CreateOptions(new RedisConsumerOptions
         {
@@ -242,11 +248,27 @@ public class WorkerStreamRecoveryTests
 
         var bootstrapper = CreateBootstrapper();
         var database = new Mock<IDatabase>();
+        var eventRepository = new Mock<IEventRepository>();
+        var eventHandler = new Mock<IWorkerEventHandler>();
         using var cancellation = new CancellationTokenSource();
         cancellation.CancelAfter(TimeSpan.FromSeconds(2));
 
+        eventRepository
+            .Setup(r => r.UpdateStatusAsync(It.IsAny<Guid>(), It.IsAny<EventStatus>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        eventRepository
+            .Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        eventHandler
+            .Setup(h => h.HandleAsync(It.IsAny<Guid>(), It.IsAny<StreamEntry>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var eventId = Guid.NewGuid();
+
         database
-            .Setup(d => d.StreamReadGroupAsync(
+            .SetupSequence(d => d.StreamReadGroupAsync(
                 options.Value.StreamName,
                 options.Value.GroupName,
                 options.Value.ConsumerName,
@@ -255,13 +277,111 @@ public class WorkerStreamRecoveryTests
                 false,
                 null,
                 CommandFlags.None))
-            .Callback(() => cancellation.Cancel())
-            .ReturnsAsync(new[] { default(StreamEntry) });
+            .ReturnsAsync(new[]
+            {
+                new StreamEntry("1700000000000-0", new[]
+                {
+                    new NameValueEntry("event_id", eventId.ToString())
+                })
+            })
+            .Returns(() =>
+            {
+                cancellation.Cancel();
+                return Task.FromResult(Array.Empty<StreamEntry>());
+            });
 
-        var worker = new FailingTestWorker(
+        var worker = new TestableWorker(
             NullLogger<EventWorker.Worker>.Instance,
             CreateMultiplexer(database.Object).Object,
             bootstrapper.Object,
+            CreateScopeFactory(eventRepository, eventHandler),
+            options);
+
+        await worker.RunAsync(cancellation.Token);
+
+        eventRepository.Verify(r => r.UpdateStatusAsync(
+                eventId,
+                EventStatus.PROCESSING,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        eventRepository.Verify(r => r.UpdateStatusAsync(
+                eventId,
+                EventStatus.SUCCEEDED,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        database.Verify(d => d.StreamAcknowledgeAsync(
+                options.Value.StreamName,
+                options.Value.GroupName,
+                It.IsAny<RedisValue>(),
+                CommandFlags.None),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Acks_WhenHandlerFailsAndFailedStatusIsPersisted()
+    {
+        var options = CreateOptions(new RedisConsumerOptions
+        {
+            StreamName = "events:ingress",
+            GroupName = "event-worker",
+            ConsumerName = "consumer-1",
+            ReadBatchSize = 1,
+            EmptyReadDelay = 1,
+            ErrorDelayMilliseconds = 1,
+            DrainOnStartupMaxBatches = 0,
+            DrainOnStartupMaxMessages = 0,
+            ReclaimIntervalMilliseconds = 60_000
+        });
+
+        var bootstrapper = CreateBootstrapper();
+        var database = new Mock<IDatabase>();
+        var eventRepository = new Mock<IEventRepository>();
+        var eventHandler = new Mock<IWorkerEventHandler>();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.CancelAfter(TimeSpan.FromSeconds(2));
+
+        eventRepository
+            .Setup(r => r.UpdateStatusAsync(It.IsAny<Guid>(), It.IsAny<EventStatus>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        eventRepository
+            .Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        eventHandler
+            .Setup(h => h.HandleAsync(It.IsAny<Guid>(), It.IsAny<StreamEntry>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("handler failed"));
+
+        database
+            .SetupSequence(d => d.StreamReadGroupAsync(
+                options.Value.StreamName,
+                options.Value.GroupName,
+                options.Value.ConsumerName,
+                ">",
+                options.Value.ReadBatchSize,
+                false,
+                null,
+                CommandFlags.None))
+            .ReturnsAsync(new[]
+            {
+                new StreamEntry("1700000000000-0", new[]
+                {
+                    new NameValueEntry("event_id", Guid.NewGuid().ToString())
+                })
+            })
+            .Returns(() =>
+            {
+                cancellation.Cancel();
+                return Task.FromResult(Array.Empty<StreamEntry>());
+            });
+
+        var worker = new TestableWorker(
+            NullLogger<EventWorker.Worker>.Instance,
+            CreateMultiplexer(database.Object).Object,
+            bootstrapper.Object,
+            CreateScopeFactory(eventRepository, eventHandler),
             options);
 
         await worker.RunAsync(cancellation.Token);
@@ -271,7 +391,19 @@ public class WorkerStreamRecoveryTests
                 options.Value.GroupName,
                 It.IsAny<RedisValue>(),
                 CommandFlags.None),
-            Times.Never);
+            Times.Once);
+
+        eventRepository.Verify(r => r.UpdateStatusAsync(
+                It.IsAny<Guid>(),
+                EventStatus.PROCESSING,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        eventRepository.Verify(r => r.UpdateStatusAsync(
+                It.IsAny<Guid>(),
+                EventStatus.FAILED_RETRYABLE,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
@@ -358,6 +490,7 @@ public class WorkerStreamRecoveryTests
             NullLogger<EventWorker.Worker>.Instance,
             CreateMultiplexer(database.Object).Object,
             bootstrapper.Object,
+            CreateScopeFactory(),
             options);
 
         await worker.RunAsync(cancellation.Token);
@@ -406,33 +539,50 @@ public class WorkerStreamRecoveryTests
         return multiplexer;
     }
 
+    private static IServiceScopeFactory CreateScopeFactory(
+        Mock<IEventRepository>? eventRepositoryMock = null,
+        Mock<IWorkerEventHandler>? eventHandlerMock = null)
+    {
+        if (eventRepositoryMock is null)
+        {
+            eventRepositoryMock = new Mock<IEventRepository>();
+            eventRepositoryMock
+                .Setup(r => r.UpdateStatusAsync(It.IsAny<Guid>(), It.IsAny<EventStatus>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+            eventRepositoryMock
+                .Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+        }
+
+        if (eventHandlerMock is null)
+        {
+            eventHandlerMock = new Mock<IWorkerEventHandler>();
+            eventHandlerMock
+                .Setup(h => h.HandleAsync(It.IsAny<Guid>(), It.IsAny<StreamEntry>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+        }
+
+        var services = new ServiceCollection();
+        services.AddScoped(_ => eventRepositoryMock.Object);
+        services.AddScoped(_ => eventHandlerMock.Object);
+
+        var provider = services.BuildServiceProvider();
+        return provider.GetRequiredService<IServiceScopeFactory>();
+    }
+
     private class TestableWorker : EventWorker.Worker
     {
         public TestableWorker(
             Microsoft.Extensions.Logging.ILogger<EventWorker.Worker> logger,
             IConnectionMultiplexer connectionMultiplexer,
             IRedisConsumerGroupBootstrapper bootstrapper,
+            IServiceScopeFactory scopeFactory,
             IOptions<RedisConsumerOptions> options)
-            : base(logger, connectionMultiplexer, bootstrapper, options)
+            : base(logger, connectionMultiplexer, bootstrapper, scopeFactory, options)
         {
         }
 
         public Task RunAsync(CancellationToken cancellationToken)
             => ExecuteAsync(cancellationToken);
-    }
-
-    private sealed class FailingTestWorker : TestableWorker
-    {
-        public FailingTestWorker(
-            Microsoft.Extensions.Logging.ILogger<EventWorker.Worker> logger,
-            IConnectionMultiplexer connectionMultiplexer,
-            IRedisConsumerGroupBootstrapper bootstrapper,
-            IOptions<RedisConsumerOptions> options)
-            : base(logger, connectionMultiplexer, bootstrapper, options)
-        {
-        }
-
-        protected override Task<bool> TryHandleEntryAsync(StreamEntry entry, string phase, CancellationToken stoppingToken)
-            => Task.FromResult(false);
     }
 }
