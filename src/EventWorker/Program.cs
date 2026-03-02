@@ -1,4 +1,5 @@
 using EventWorker;
+using EventWorker.Handlers;
 using EventPlatform.Infrastructure;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
@@ -33,7 +34,18 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(serviceProvider =>
 });
 
 builder.Services.AddSingleton<IRedisConsumerGroupBootstrapper, RedisConsumerGroupBootstrapper>();
-builder.Services.AddSingleton<IWorkerEventHandler, NoopWorkerEventHandler>();
+
+builder.Services.AddSingleton<NoopWorkerEventHandler>();
+builder.Services.AddSingleton<UserCreatedEventHandler>();
+builder.Services.AddSingleton<IWorkerEventHandler>(sp =>
+    new EventHandlerRouter(
+        sp.GetRequiredService<ILogger<EventHandlerRouter>>(),
+        sp.GetRequiredService<NoopWorkerEventHandler>(),
+        new Dictionary<string, IWorkerEventHandler>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["user.created"] = sp.GetRequiredService<UserCreatedEventHandler>()
+        }));
+
 builder.Services.AddHostedService<Worker>();
 
 var host = builder.Build();
