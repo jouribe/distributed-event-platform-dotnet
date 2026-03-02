@@ -85,6 +85,19 @@ public sealed class UserCreatedHandlerIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task HandleAsync_CreatesSeparateRows_WhenSameExternalUserIdBelongsToDifferentTenants()
+    {
+        var handler = CreateHandler();
+
+        await handler.HandleAsync(Guid.NewGuid(), BuildEntry("usr-shared", "a@tenant1.com", "Alice", "tenant-1"), "read-new", CancellationToken.None);
+        await handler.HandleAsync(Guid.NewGuid(), BuildEntry("usr-shared", "b@tenant2.com", "Bob",   "tenant-2"), "read-new", CancellationToken.None);
+
+        // Each tenant owns their own user row — cross-tenant uniqueness must not apply
+        var count = await CountUsersWithExternalIdAsync("usr-shared");
+        Assert.Equal(2, count);
+    }
+
+    [Fact]
     public async Task HandleAsync_SetsSourceEventIdToNull_WhenEventIdIsEmpty()
     {
         var handler = CreateHandler();
@@ -156,6 +169,19 @@ public sealed class UserCreatedHandlerIntegrationTests : IAsyncLifetime
     }
 
     private async Task<int> CountUsersAsync(string externalUserId)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync();
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM event_platform.users WHERE external_user_id = @id;";
+        cmd.Parameters.AddWithValue("id", externalUserId);
+
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync());
+    }
+
+    /// <summary>Counts rows matching external_user_id across ALL tenants.</summary>
+    private async Task<int> CountUsersWithExternalIdAsync(string externalUserId)
     {
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync();

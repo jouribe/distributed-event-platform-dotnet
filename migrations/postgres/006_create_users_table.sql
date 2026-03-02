@@ -6,7 +6,7 @@ CREATE TABLE event_platform.users (
     name             text        NOT NULL,
     created_at       timestamptz NOT NULL DEFAULT now(),
     source_event_id  uuid        NULL,
-    CONSTRAINT uq_users_external_user_id UNIQUE (external_user_id)
+    CONSTRAINT uq_users_tenant_external_user_id UNIQUE (tenant_id, external_user_id)
 );
 
 CREATE INDEX ix_users_tenant_id ON event_platform.users (tenant_id);

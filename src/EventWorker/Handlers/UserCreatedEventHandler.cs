@@ -45,7 +45,7 @@ public sealed class UserCreatedEventHandler : IWorkerEventHandler
             """
             INSERT INTO event_platform.users (external_user_id, tenant_id, email, name, source_event_id)
             VALUES (@external_user_id, @tenant_id, @email, @name, @source_event_id)
-            ON CONFLICT (external_user_id) DO NOTHING;
+            ON CONFLICT (tenant_id, external_user_id) DO NOTHING;
             """,
             new
             {
