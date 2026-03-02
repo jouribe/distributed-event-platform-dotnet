@@ -72,16 +72,27 @@ public sealed class RedisEventPublisher : IEventPublisher
         cancellationToken.ThrowIfCancellationRequested();
 
         var database = _connectionMultiplexer.GetDatabase();
-        var message = JsonSerializer.Serialize(new
-        {
-            payload = payload.RootElement
-        });
+        var root     = payload.RootElement;
 
-        var entries = new[]
-        {
-            new NameValueEntry("message", message)
-        };
+        // Use the stored envelope JSON directly as the message body so the outbox
+        // path produces entries structurally identical to those written by PublishAsync.
+        // Also promote key metadata as top-level stream fields so consumers (Worker,
+        // EventHandlerRouter) can read event_id / event_type without deserialising
+        // the full message body.
+        var message = root.GetRawText();
+        var entries = new List<NameValueEntry>();
 
-        await database.StreamAddAsync(streamName, entries).ConfigureAwait(false);
+        if (root.TryGetProperty("event_id", out var eid) && eid.ValueKind == JsonValueKind.String)
+            entries.Add(new NameValueEntry("event_id", eid.GetString()!));
+        if (root.TryGetProperty("event_type", out var et) && et.ValueKind == JsonValueKind.String)
+            entries.Add(new NameValueEntry("event_type", et.GetString()!));
+        if (root.TryGetProperty("tenant_id", out var tid) && tid.ValueKind == JsonValueKind.String)
+            entries.Add(new NameValueEntry("tenant_id", tid.GetString()!));
+        if (root.TryGetProperty("correlation_id", out var cid) && cid.ValueKind == JsonValueKind.String)
+            entries.Add(new NameValueEntry("correlation_id", cid.GetString()!));
+
+        entries.Add(new NameValueEntry("message", message));
+
+        await database.StreamAddAsync(streamName, entries.ToArray()).ConfigureAwait(false);
     }
 }

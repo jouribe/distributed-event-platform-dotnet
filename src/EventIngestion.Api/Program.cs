@@ -130,12 +130,26 @@ app.MapPost("/events", async (
 
     try
     {
-        // Insert event + outbox in a single atomic transaction
+        // Insert event + outbox in a single atomic transaction.
+        // The outbox payload mirrors the full envelope message that RedisEventPublisher.PublishAsync
+        // would build, so PublishToStreamAsync can promote all metadata as top-level stream fields.
+        var outboxPayload = JsonDocument.Parse(JsonSerializer.Serialize(new
+        {
+            event_id        = envelope.Id,
+            tenant_id       = envelope.TenantId,
+            event_type      = envelope.EventType,
+            correlation_id  = envelope.CorrelationId,
+            occurred_at     = envelope.OccurredAt,
+            received_at     = envelope.ReceivedAt,
+            idempotency_key = envelope.IdempotencyKey,
+            payload         = envelope.Payload.RootElement,
+            status          = envelope.Status.ToString()
+        }));
         var outboxEvent = OutboxEvent.CreateNew(
             id: Guid.NewGuid(),
             eventId: command.EventId,
             streamName: streamName,
-            payload: envelope.Payload);
+            payload: outboxPayload);
 
         await eventRepository.InsertWithOutboxAsync(envelope, outboxEvent, cancellationToken);
 
@@ -165,12 +179,24 @@ app.MapPost("/events", async (
         if (existing.Status == EventStatus.RECEIVED)
         {
             // Event exists but hasn't been published to the outbox yet
-            // Create an outbox entry to ensure it gets published
+            // Create an outbox entry to ensure it gets published.
+            var existingOutboxPayload = JsonDocument.Parse(JsonSerializer.Serialize(new
+            {
+                event_id        = existing.Id,
+                tenant_id       = existing.TenantId,
+                event_type      = existing.EventType,
+                correlation_id  = existing.CorrelationId,
+                occurred_at     = existing.OccurredAt,
+                received_at     = existing.ReceivedAt,
+                idempotency_key = existing.IdempotencyKey,
+                payload         = existing.Payload.RootElement,
+                status          = existing.Status.ToString()
+            }));
             var outboxEvent = OutboxEvent.CreateNew(
                 id: Guid.NewGuid(),
                 eventId: existing.Id,
                 streamName: streamName,
-                payload: existing.Payload);
+                payload: existingOutboxPayload);
 
             try
             {
