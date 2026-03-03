@@ -449,6 +449,32 @@ public sealed class EventRepository : IEventRepository
         }
     }
 
+    public async Task RequeueForRetryAsync(Guid eventId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        var command = new CommandDefinition(
+            EventQueries.RequeueForRetry,
+            new { EventId = eventId },
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        try
+        {
+            await connection.ExecuteAsync(command);
+        }
+        catch (Exception ex)
+        {
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
     /// <summary>
     /// Retrieves an event envelope by its ID.
     /// </summary>

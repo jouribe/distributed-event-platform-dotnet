@@ -96,10 +96,13 @@ public class RetrySchedulerService : BackgroundService
         try
         {
             // Mark QUEUED first to prevent double-scheduling on the next poll cycle.
+            // RequeueForRetryAsync clears next_attempt_at and last_error so the domain
+            // invariant (NextAttemptAt must be null for non-FAILED_RETRYABLE status) is
+            // satisfied and RehydrateFromPersistence does not throw on subsequent reads.
             // Trade-off: if we crash before publishing, the event is stuck in QUEUED
             // (acceptable MVP trade-off; a future improvement could use a second outbox).
             await eventRepository
-                .UpdateStatusAsync(envelope.Id, EventStatus.QUEUED, cancellationToken)
+                .RequeueForRetryAsync(envelope.Id, cancellationToken)
                 .ConfigureAwait(false);
 
             await _eventPublisher

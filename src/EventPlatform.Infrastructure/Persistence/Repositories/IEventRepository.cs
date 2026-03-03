@@ -77,6 +77,15 @@ public interface IEventRepository
     Task MarkTerminalFailureAsync(Guid eventId, string lastError, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Transitions an event from FAILED_RETRYABLE back to QUEUED, clearing
+    /// next_attempt_at and last_error so the domain model invariant
+    /// (NextAttemptAt must be null for non-FAILED_RETRYABLE status) is satisfied.
+    /// </summary>
+    /// <param name="eventId">The event ID.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    Task RequeueForRetryAsync(Guid eventId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Retrieves an event envelope by its ID.
     /// </summary>
     /// <param name="eventId">The event ID.</param>

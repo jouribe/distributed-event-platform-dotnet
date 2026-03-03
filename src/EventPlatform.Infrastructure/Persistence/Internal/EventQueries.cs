@@ -58,6 +58,17 @@ internal static class EventQueries
         WHERE id = @EventId";
 
     /// <summary>
+    /// SQL query to transition an event from FAILED_RETRYABLE back to QUEUED,
+    /// clearing retry metadata so RehydrateFromPersistence does not throw.
+    /// </summary>
+    public const string RequeueForRetry = @"
+        UPDATE events
+        SET status = 'QUEUED',
+            next_attempt_at = NULL,
+            last_error = NULL
+        WHERE id = @EventId";
+
+    /// <summary>
     /// SQL query to retrieve a single event by ID.
     /// </summary>
     public const string GetById = @"
