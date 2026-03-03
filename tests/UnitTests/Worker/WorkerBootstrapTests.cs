@@ -168,7 +168,7 @@ public class WorkerBootstrapTests
                 .Returns(Task.CompletedTask);
             eventRepositoryMock
                 .Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
+                .ReturnsAsync(1);
         }
 
         if (eventHandlerMock is null)
@@ -195,7 +195,7 @@ public class WorkerBootstrapTests
             IRedisConsumerGroupBootstrapper bootstrapper,
             IServiceScopeFactory scopeFactory,
             IOptions<RedisConsumerOptions> options)
-            : base(logger, connectionMultiplexer, bootstrapper, scopeFactory, options)
+            : base(logger, connectionMultiplexer, bootstrapper, scopeFactory, options, Options.Create(new RetryOptions()))
         {
         }
 

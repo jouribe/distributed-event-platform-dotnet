@@ -1,6 +1,8 @@
 using EventWorker;
 using EventWorker.Handlers;
+using EventPlatform.Application.Abstractions;
 using EventPlatform.Infrastructure;
+using EventPlatform.Infrastructure.Messaging;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 
@@ -47,6 +49,19 @@ builder.Services.AddSingleton<IWorkerEventHandler>(sp =>
         }));
 
 builder.Services.AddHostedService<Worker>();
+
+builder.Services
+    .AddOptions<RetryOptions>()
+    .Bind(builder.Configuration.GetSection(RetryOptions.SectionName));
+
+// IEventPublisher — reuse the IConnectionMultiplexer already registered above.
+var retryStreamName = builder.Configuration
+    .GetSection(RedisConsumerOptions.SectionName)
+    .GetValue<string>("StreamName") ?? "events:ingress";
+builder.Services.AddSingleton(new RedisPublisherOptions { StreamName = retryStreamName });
+builder.Services.AddSingleton<IEventPublisher, RedisEventPublisher>();
+
+builder.Services.AddHostedService<RetrySchedulerService>();
 
 var host = builder.Build();
 host.Run();

@@ -15,19 +15,22 @@ public class Worker : BackgroundService
     private readonly IRedisConsumerGroupBootstrapper _bootstrapper;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly RedisConsumerOptions _options;
+    private readonly RetryOptions _retryOptions;
 
     public Worker(
         ILogger<Worker> logger,
         IConnectionMultiplexer connectionMultiplexer,
         IRedisConsumerGroupBootstrapper bootstrapper,
         IServiceScopeFactory scopeFactory,
-        IOptions<RedisConsumerOptions> options)
+        IOptions<RedisConsumerOptions> options,
+        IOptions<RetryOptions> retryOptions)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _connectionMultiplexer = connectionMultiplexer ?? throw new ArgumentNullException(nameof(connectionMultiplexer));
         _bootstrapper = bootstrapper ?? throw new ArgumentNullException(nameof(bootstrapper));
         _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
         _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+        _retryOptions = retryOptions?.Value ?? throw new ArgumentNullException(nameof(retryOptions));
 
         if (string.IsNullOrWhiteSpace(_options.StreamName))
             throw new ArgumentException("StreamName cannot be null or empty.", nameof(options));
@@ -410,13 +413,15 @@ public class Worker : BackgroundService
         var eventRepository = scope.ServiceProvider.GetRequiredService<IEventRepository>();
         var eventHandler = scope.ServiceProvider.GetRequiredService<IWorkerEventHandler>();
 
+        var attempts = 0;
+
         try
         {
             await eventRepository
                 .UpdateStatusAsync(eventId, EventStatus.PROCESSING, stoppingToken)
                 .ConfigureAwait(false);
 
-            await eventRepository
+            attempts = await eventRepository
                 .IncrementAttemptsAsync(eventId, stoppingToken)
                 .ConfigureAwait(false);
 
@@ -480,18 +485,43 @@ public class Worker : BackgroundService
 
             try
             {
-                await eventRepository
-                    .UpdateStatusAsync(eventId, EventStatus.FAILED_RETRYABLE, stoppingToken)
-                    .ConfigureAwait(false);
+                if (attempts >= _retryOptions.MaxAttempts)
+                {
+                    await eventRepository
+                        .MarkTerminalFailureAsync(eventId, ex.Message, stoppingToken)
+                        .ConfigureAwait(false);
 
-                _logger.LogInformation(
-                    "Event {EventId} transitioned to FAILED_RETRYABLE (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
-                    eventId,
-                    entry.Id,
-                    phase,
-                    _options.StreamName,
-                    _options.GroupName,
-                    _options.ConsumerName);
+                    _logger.LogError(
+                        "Event {EventId} reached max attempts ({MaxAttempts}) — transitioned to FAILED_TERMINAL (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                        eventId,
+                        _retryOptions.MaxAttempts,
+                        entry.Id,
+                        phase,
+                        _options.StreamName,
+                        _options.GroupName,
+                        _options.ConsumerName);
+                }
+                else
+                {
+                    var delaySec = Math.Min(Math.Pow(2, attempts), _retryOptions.MaxBackoffSeconds);
+                    var nextAttemptAt = DateTimeOffset.UtcNow.AddSeconds(delaySec);
+
+                    await eventRepository
+                        .MarkRetryableFailureAsync(eventId, nextAttemptAt, ex.Message, stoppingToken)
+                        .ConfigureAwait(false);
+
+                    _logger.LogWarning(
+                        "Event {EventId} transitioned to FAILED_RETRYABLE (attempt {Attempts}/{MaxAttempts}, next retry at {NextAttemptAt}, entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                        eventId,
+                        attempts,
+                        _retryOptions.MaxAttempts,
+                        nextAttemptAt,
+                        entry.Id,
+                        phase,
+                        _options.StreamName,
+                        _options.GroupName,
+                        _options.ConsumerName);
+                }
 
                 return true;
             }
@@ -499,7 +529,7 @@ public class Worker : BackgroundService
             {
                 _logger.LogError(
                     persistenceEx,
-                    "Failed to persist FAILED_RETRYABLE transition for event {EventId} after handler error (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                    "Failed to persist failure transition for event {EventId} after handler error (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
                     eventId,
                     entry.Id,
                     phase,

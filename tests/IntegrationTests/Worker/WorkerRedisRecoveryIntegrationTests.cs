@@ -186,7 +186,7 @@ public sealed class WorkerRedisRecoveryIntegrationTests : IAsyncLifetime
             IOptions<RedisConsumerOptions> options,
             IServiceScopeFactory? scopeFactory,
             Action<StreamEntry>? onHandled)
-            : base(logger, connectionMultiplexer, bootstrapper, scopeFactory ?? CreateDefaultScopeFactory(), options)
+            : base(logger, connectionMultiplexer, bootstrapper, scopeFactory ?? CreateDefaultScopeFactory(), options, Options.Create(new RetryOptions()))
         {
             _onHandled = onHandled;
         }

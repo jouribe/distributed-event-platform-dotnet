@@ -356,7 +356,7 @@ public sealed class EventRepository : IEventRepository
     /// <param name="eventId">The event ID.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    public async Task IncrementAttemptsAsync(Guid eventId, CancellationToken cancellationToken = default)
+    public async Task<int> IncrementAttemptsAsync(Guid eventId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -368,6 +368,97 @@ public sealed class EventRepository : IEventRepository
         var command = new CommandDefinition(
             EventQueries.IncrementAttempts,
             parameters,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        try
+        {
+            return await connection.QuerySingleOrDefaultAsync<int>(command);
+        }
+        catch (Exception ex)
+        {
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
+    public async Task MarkRetryableFailureAsync(Guid eventId, DateTimeOffset nextAttemptAt, string lastError, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        var parameters = new
+        {
+            EventId = eventId,
+            NextAttemptAt = nextAttemptAt,
+            LastError = lastError
+        };
+
+        var command = new CommandDefinition(
+            EventQueries.MarkRetryableFailure,
+            parameters,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        try
+        {
+            await connection.ExecuteAsync(command);
+        }
+        catch (Exception ex)
+        {
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
+    public async Task MarkTerminalFailureAsync(Guid eventId, string lastError, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        var parameters = new
+        {
+            EventId = eventId,
+            LastError = lastError
+        };
+
+        var command = new CommandDefinition(
+            EventQueries.MarkTerminalFailure,
+            parameters,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        try
+        {
+            await connection.ExecuteAsync(command);
+        }
+        catch (Exception ex)
+        {
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
+    public async Task RequeueForRetryAsync(Guid eventId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        var command = new CommandDefinition(
+            EventQueries.RequeueForRetry,
+            new { EventId = eventId },
             commandTimeout: 30,
             cancellationToken: cancellationToken);
 

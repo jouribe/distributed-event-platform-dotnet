@@ -52,12 +52,38 @@ public interface IEventRepository
     Task UpdateStatusAsync(Guid eventId, EventStatus newStatus, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Increments the attempt counter for an event by its ID.
+    /// Increments the attempt counter for an event by its ID and returns the new count.
     /// </summary>
     /// <param name="eventId">The event ID.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    Task IncrementAttemptsAsync(Guid eventId, CancellationToken cancellationToken = default);
+    /// <returns>The new attempts count after incrementing.</returns>
+    Task<int> IncrementAttemptsAsync(Guid eventId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Marks an event as retryable and records backoff metadata.
+    /// </summary>
+    /// <param name="eventId">The event ID.</param>
+    /// <param name="nextAttemptAt">The earliest time at which the event may be retried.</param>
+    /// <param name="lastError">The error message from the most recent failure.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    Task MarkRetryableFailureAsync(Guid eventId, DateTimeOffset nextAttemptAt, string lastError, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Marks an event as terminally failed (no further retries).
+    /// </summary>
+    /// <param name="eventId">The event ID.</param>
+    /// <param name="lastError">The error message from the most recent failure.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    Task MarkTerminalFailureAsync(Guid eventId, string lastError, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Transitions an event from FAILED_RETRYABLE back to QUEUED, clearing
+    /// next_attempt_at and last_error so the domain model invariant
+    /// (NextAttemptAt must be null for non-FAILED_RETRYABLE status) is satisfied.
+    /// </summary>
+    /// <param name="eventId">The event ID.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    Task RequeueForRetryAsync(Guid eventId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Retrieves an event envelope by its ID.
