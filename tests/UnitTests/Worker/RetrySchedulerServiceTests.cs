@@ -60,7 +60,7 @@ public class RetrySchedulerServiceTests
     }
 
     [Fact]
-    public async Task Scheduler_ContinuesPolling_WhenPublisherThrows()
+    public async Task Scheduler_RestoresFailedRetryable_WhenPublisherThrows()
     {
         var (service, repoMock, publisherMock, cts) = CreateScenario();
 
@@ -84,9 +84,18 @@ public class RetrySchedulerServiceTests
         // Should complete without re-throwing the publish exception.
         await service.RunAsync(cts.Token);
 
-        // RequeueForRetryAsync was called before the failed publish attempt.
+        // RequeueForRetryAsync was attempted before the publish.
         repoMock.Verify(r => r.RequeueForRetryAsync(
                 envelope.Id, It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // MarkRetryableFailureAsync must be called to restore the event so the
+        // scanner can find it on the next cycle (it only selects FAILED_RETRYABLE).
+        repoMock.Verify(r => r.MarkRetryableFailureAsync(
+                envelope.Id,
+                It.IsAny<DateTimeOffset>(),
+                It.IsAny<string>(),
+                CancellationToken.None),
             Times.Once);
     }
 
@@ -106,6 +115,10 @@ public class RetrySchedulerServiceTests
         var repoMock = new Mock<IEventRepository>();
         repoMock.Setup(r => r.RequeueForRetryAsync(
                 It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoMock.Setup(r => r.MarkRetryableFailureAsync(
+                It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var publisherMock = new Mock<IEventPublisher>();

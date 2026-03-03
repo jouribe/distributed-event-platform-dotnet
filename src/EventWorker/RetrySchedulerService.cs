@@ -93,18 +93,33 @@ public class RetrySchedulerService : BackgroundService
         EventEnvelope envelope,
         CancellationToken cancellationToken)
     {
+        // Phase 1 — mark QUEUED in the DB first (prevents double-scheduling).
+        // RequeueForRetryAsync also clears next_attempt_at / last_error to satisfy
+        // the domain invariant enforced by RehydrateFromPersistence.
+        // If this fails the row is still FAILED_RETRYABLE, so it is safe to abort.
         try
         {
-            // Mark QUEUED first to prevent double-scheduling on the next poll cycle.
-            // RequeueForRetryAsync clears next_attempt_at and last_error so the domain
-            // invariant (NextAttemptAt must be null for non-FAILED_RETRYABLE status) is
-            // satisfied and RehydrateFromPersistence does not throw on subsequent reads.
-            // Trade-off: if we crash before publishing, the event is stuck in QUEUED
-            // (acceptable MVP trade-off; a future improvement could use a second outbox).
             await eventRepository
                 .RequeueForRetryAsync(envelope.Id, cancellationToken)
                 .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed to mark event {EventId} as QUEUED. It remains FAILED_RETRYABLE and will be retried on the next scheduler cycle.",
+                envelope.Id);
+            return;
+        }
 
+        // Phase 2 — publish to the Redis stream.
+        // If this fails the row is already QUEUED but has no stream entry, so the
+        // event would be permanently stranded (GetRetryableEventsAsync only selects
+        // FAILED_RETRYABLE rows). Restore to FAILED_RETRYABLE with a fresh backoff
+        // so the scheduler picks it up again. Use CancellationToken.None so the
+        // restore always runs, even when the cancellation token triggered the failure.
+        try
+        {
             await _eventPublisher
                 .PublishAsync(envelope, cancellationToken)
                 .ConfigureAwait(false);
@@ -115,12 +130,29 @@ public class RetrySchedulerService : BackgroundService
                 _streamName,
                 envelope.Attempts);
         }
-        catch (Exception ex)
+        catch (Exception publishEx)
         {
-            _logger.LogError(
-                ex,
-                "Failed to re-enqueue event {EventId}. It will be retried on the next scheduler cycle.",
+            _logger.LogWarning(
+                publishEx,
+                "Failed to publish event {EventId} to stream after marking QUEUED. Restoring to FAILED_RETRYABLE.",
                 envelope.Id);
+
+            var delaySec = Math.Min(Math.Pow(2, envelope.Attempts), _retryOptions.MaxBackoffSeconds);
+            var nextAttemptAt = DateTimeOffset.UtcNow.AddSeconds(delaySec);
+
+            try
+            {
+                await eventRepository
+                    .MarkRetryableFailureAsync(envelope.Id, nextAttemptAt, publishEx.Message, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception restoreEx)
+            {
+                _logger.LogError(
+                    restoreEx,
+                    "Failed to restore event {EventId} to FAILED_RETRYABLE after publish failure. Event may be stranded as QUEUED.",
+                    envelope.Id);
+            }
         }
     }
 }
