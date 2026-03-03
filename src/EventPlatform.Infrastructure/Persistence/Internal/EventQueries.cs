@@ -29,11 +29,32 @@ internal static class EventQueries
         WHERE id = @EventId";
 
     /// <summary>
-    /// SQL query to increment the attempts counter for an event.
+    /// SQL query to increment the attempts counter for an event and return the new count.
     /// </summary>
     public const string IncrementAttempts = @"
         UPDATE events
         SET attempts = attempts + 1
+        WHERE id = @EventId
+        RETURNING attempts";
+
+    /// <summary>
+    /// SQL query to mark an event as retryable with backoff metadata.
+    /// </summary>
+    public const string MarkRetryableFailure = @"
+        UPDATE events
+        SET status = 'FAILED_RETRYABLE',
+            next_attempt_at = @NextAttemptAt,
+            last_error = @LastError
+        WHERE id = @EventId";
+
+    /// <summary>
+    /// SQL query to mark an event as terminally failed.
+    /// </summary>
+    public const string MarkTerminalFailure = @"
+        UPDATE events
+        SET status = 'FAILED_TERMINAL',
+            next_attempt_at = NULL,
+            last_error = @LastError
         WHERE id = @EventId";
 
     /// <summary>

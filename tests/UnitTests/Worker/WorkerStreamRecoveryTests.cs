@@ -259,7 +259,7 @@ public class WorkerStreamRecoveryTests
 
         eventRepository
             .Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(1);
 
         eventHandler
             .Setup(h => h.HandleAsync(It.IsAny<Guid>(), It.IsAny<StreamEntry>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -348,6 +348,10 @@ public class WorkerStreamRecoveryTests
 
         eventRepository
             .Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+
+        eventRepository
+            .Setup(r => r.MarkRetryableFailureAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         eventHandler
@@ -399,9 +403,10 @@ public class WorkerStreamRecoveryTests
                 It.IsAny<CancellationToken>()),
             Times.Once);
 
-        eventRepository.Verify(r => r.UpdateStatusAsync(
+        eventRepository.Verify(r => r.MarkRetryableFailureAsync(
                 It.IsAny<Guid>(),
-                EventStatus.FAILED_RETRYABLE,
+                It.IsAny<DateTimeOffset>(),
+                It.IsAny<string>(),
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -631,7 +636,7 @@ public class WorkerStreamRecoveryTests
                 .Returns(Task.CompletedTask);
             eventRepositoryMock
                 .Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
+                .ReturnsAsync(1);
         }
 
         if (eventHandlerMock is null)
@@ -658,7 +663,7 @@ public class WorkerStreamRecoveryTests
             IRedisConsumerGroupBootstrapper bootstrapper,
             IServiceScopeFactory scopeFactory,
             IOptions<RedisConsumerOptions> options)
-            : base(logger, connectionMultiplexer, bootstrapper, scopeFactory, options)
+            : base(logger, connectionMultiplexer, bootstrapper, scopeFactory, options, Options.Create(new RetryOptions()))
         {
         }
 

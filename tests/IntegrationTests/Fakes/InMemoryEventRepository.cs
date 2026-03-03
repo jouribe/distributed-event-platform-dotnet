@@ -69,7 +69,9 @@ public sealed class InMemoryEventRepository : IEventRepository
         return Task.CompletedTask;
     }
 
-    public Task IncrementAttemptsAsync(Guid eventId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<int> IncrementAttemptsAsync(Guid eventId, CancellationToken cancellationToken = default) => Task.FromResult(1);
+    public Task MarkRetryableFailureAsync(Guid eventId, DateTimeOffset nextAttemptAt, string lastError, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task MarkTerminalFailureAsync(Guid eventId, string lastError, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<EventEnvelope?> GetByIdAsync(Guid eventId, CancellationToken cancellationToken = default) => Task.FromResult<EventEnvelope?>(null);
 
     public Task<EventEnvelope?> GetByTenantAndIdempotencyKeyAsync(string tenantId, string idempotencyKey, CancellationToken cancellationToken = default)
