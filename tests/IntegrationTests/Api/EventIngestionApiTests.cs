@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace EventPlatform.IntegrationTests.Api;
 
+[Collection(nameof(ApiTestsCollection))]
 public class EventIngestionApiTests : IClassFixture<CustomWebApplicationFactory>
 {
     private readonly CustomWebApplicationFactory _factory;
