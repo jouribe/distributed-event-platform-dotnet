@@ -117,6 +117,25 @@ LIMIT 1;";
         throw new TimeoutException($"Timed out waiting for stream '{StreamName}' length {expectedLength}. Current length: {finalLength}.");
     }
 
+    /// <summary>
+    /// Polls the Redis stream for <paramref name="window"/> and fails immediately
+    /// if the stream length ever differs from <paramref name="expected"/>.
+    /// Use this to assert that a stream has NOT grown (e.g. after a duplicate POST),
+    /// giving background publishers enough time to process any potential duplicate entries.
+    /// </summary>
+    public async Task EnsureStreamLengthStaysAtAsync(long expected, TimeSpan window)
+    {
+        var deadline = DateTimeOffset.UtcNow + window;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            var current = await GetStreamLengthAsync();
+            if (current != expected)
+                throw new Exception(
+                    $"Stream '{StreamName}' length changed to {current} (expected {expected} to remain stable).");
+            await Task.Delay(50);
+        }
+    }
+
     async Task IAsyncLifetime.InitializeAsync()
     {
         await Task.WhenAll(_postgresContainer.StartAsync(), _redisContainer.StartAsync());

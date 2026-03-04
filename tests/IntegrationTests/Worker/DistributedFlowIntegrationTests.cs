@@ -139,8 +139,9 @@ public sealed class DistributedFlowIntegrationTests : IClassFixture<CustomWebApp
         var secondResponse = await client.SendAsync(second);
         Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
 
-        // Confirm the stream still holds exactly one entry.
-        Assert.Equal(1, await _factory.GetStreamLengthAsync());
+        // Confirm the stream holds exactly one entry and stays there long enough
+        // for the outbox publisher (100 ms poll) to have processed any potential duplicate.
+        await _factory.EnsureStreamLengthStaysAtAsync(1, TimeSpan.FromMilliseconds(300));
 
         // Run the Worker against the single stream entry; it must process exactly once.
         const string groupName = GroupName + "-dup";
