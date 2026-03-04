@@ -104,6 +104,12 @@ The API also requires `Ingestion:RedisStreamName` and `Ingestion:AllowedEventTyp
   ```
 - Integration tests use `CustomWebApplicationFactory` which spins up real containers and provides `ResetStateAsync()` to truncate tables between tests
 
-## Commit convention
+## Commit & Pull Request Standard
 
-Conventional commits: `feat:`, `fix:`, `docs:`, `chore:`, `test:`
+* **Commits**: Use Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`).
+* **PR Creation**: When asked to draft a Pull Request:
+   1. **Read** `.github/pull_request_template.md` first.
+   2. **Follow** the template's structure exactly.
+   3. **Map changes** to the specific sections: Summary, Type of Change, Testing Notes, and Architectural Boundaries.
+   4. Ensure the PR title matches the Conventional Commit format.
+`
