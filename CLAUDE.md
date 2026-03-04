@@ -109,7 +109,10 @@ The API also requires `Ingestion:RedisStreamName` and `Ingestion:AllowedEventTyp
 * **Commits**: Use Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`).
 * **PR Creation**: When asked to draft a Pull Request:
    1. **Read** `.github/pull_request_template.md` first.
-   2. **Follow** the template's structure exactly.
-   3. **Map changes** to the specific sections: Summary, Type of Change, Testing Notes, and Architectural Boundaries.
+   2. **Strictly follow** the template's structure exactly.
+   3. **Provide detailed content** for the specific validation sections.
+      - **Architectural Integrity**: Explicitly confirm that `EventEnvelope` invariants, boundary rules, Outbox pattern, and idempotency are respected.
+      - **Testing & Coverage**: Detail Unit and Integration tests (Testcontainers) and confirm the 70% coverage gate.
+      - **Database & Migrations**: Verify the "Expand and Contract" pattern and `DbMigrator` execution.
    4. Ensure the PR title matches the Conventional Commit format.
 `

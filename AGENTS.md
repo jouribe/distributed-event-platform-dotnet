@@ -44,11 +44,15 @@ High-throughput distributed event processing following **Clean Architecture** an
 - **Naming**: PascalCase for types/methods, camelCase for parameters/locals. Tests must end in `Tests`.
 
 ## DevOps & Workflow
-- **Git**: Conventional Commits only (`feat:`, `fix:`, `docs:`, `test:`, `chore:`).
-- **Pull Requests**:
-  - **MUST** follow the template in `.github/pull_request_template.md`.
-  - PR titles must be Conventional Commits.
-  - Verification: Confirm no architectural leaks and that tests cover the new behavior.
+- **Commits**: Use Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`).
+* **PR Creation**: When asked to draft or describe a Pull Request:
+  1. **Read** `.github/pull_request_template.md` first.
+  2. **Strictly follow** the template's structure.
+  3. **Provide detailed content** for the specific validation sections:
+     * **Architectural Integrity**: Explicitly confirm that `EventEnvelope` invariants, boundary rules, Outbox pattern, and idempotency are respected.
+     * **Testing & Coverage**: Detail Unit and Integration tests (Testcontainers) and confirm the 70% coverage gate.
+     * **Database & Migrations**: Verify the "Expand and Contract" pattern and `DbMigrator` execution.
+  4. Ensure the PR title matches the Conventional Commit format.
 
 ## Troubleshooting
 - **Redis**: Verify `StackExchange.Redis` config matches container names.
