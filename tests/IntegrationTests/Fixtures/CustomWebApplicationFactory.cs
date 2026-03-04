@@ -134,6 +134,13 @@ LIMIT 1;";
                     $"Stream '{StreamName}' length changed to {current} (expected {expected} to remain stable).");
             await Task.Delay(50);
         }
+
+        // Final sample at the deadline boundary: the loop exits after sleeping 50 ms,
+        // so without this check the last slice of the window is never observed.
+        var final = await GetStreamLengthAsync();
+        if (final != expected)
+            throw new Exception(
+                $"Stream '{StreamName}' length changed to {final} (expected {expected} to remain stable).");
     }
 
     async Task IAsyncLifetime.InitializeAsync()
