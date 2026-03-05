@@ -423,9 +423,29 @@ public class Worker : BackgroundService
 
             if (!movedToProcessing)
             {
+                var persisted = await eventRepository
+                    .GetByIdAsync(eventId, stoppingToken)
+                    .ConfigureAwait(false);
+
+                if (persisted is null || persisted.Status == EventStatus.RECEIVED)
+                {
+                    _logger.LogWarning(
+                        "Deferring ACK for event {EventId}; transition QUEUED->PROCESSING was not applied and current state is {CurrentStatus} (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                        eventId,
+                        persisted?.Status.ToString() ?? "MISSING",
+                        entry.Id,
+                        phase,
+                        _options.StreamName,
+                        _options.GroupName,
+                        _options.ConsumerName);
+
+                    return false;
+                }
+
                 _logger.LogInformation(
-                    "Skipping duplicate delivery for event {EventId}; expected QUEUED before PROCESSING (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                    "Skipping duplicate delivery for event {EventId}; current status is {CurrentStatus} (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
                     eventId,
+                    persisted.Status,
                     entry.Id,
                     phase,
                     _options.StreamName,
