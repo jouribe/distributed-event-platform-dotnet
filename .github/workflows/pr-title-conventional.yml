@@ -1,8 +1,12 @@
-name: PR Title Conventional Commits
+name: validate-pr-title
 
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
   validate-pr-title:
