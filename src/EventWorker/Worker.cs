@@ -417,9 +417,23 @@ public class Worker : BackgroundService
 
         try
         {
-            await eventRepository
-                .UpdateStatusAsync(eventId, EventStatus.PROCESSING, stoppingToken)
+            var movedToProcessing = await eventRepository
+                .TryTransitionStatusAsync(eventId, EventStatus.QUEUED, EventStatus.PROCESSING, stoppingToken)
                 .ConfigureAwait(false);
+
+            if (!movedToProcessing)
+            {
+                _logger.LogInformation(
+                    "Skipping duplicate delivery for event {EventId}; expected QUEUED before PROCESSING (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                    eventId,
+                    entry.Id,
+                    phase,
+                    _options.StreamName,
+                    _options.GroupName,
+                    _options.ConsumerName);
+
+                return true;
+            }
 
             attempts = await eventRepository
                 .IncrementAttemptsAsync(eventId, stoppingToken)
@@ -492,7 +506,7 @@ public class Worker : BackgroundService
                         .ConfigureAwait(false);
 
                     _logger.LogError(
-                        "Event {EventId} reached max attempts ({MaxAttempts}) â€” transitioned to FAILED_TERMINAL (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                        "Event {EventId} reached max attempts ({MaxAttempts}) — transitioned to FAILED_TERMINAL (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
                         eventId,
                         _retryOptions.MaxAttempts,
                         entry.Id,
@@ -541,7 +555,6 @@ public class Worker : BackgroundService
             }
         }
     }
-
     private static bool TryResolveEventId(StreamEntry entry, out Guid eventId)
     {
         eventId = default;
@@ -603,3 +616,7 @@ public class Worker : BackgroundService
         return false;
     }
 }
+
+
+
+

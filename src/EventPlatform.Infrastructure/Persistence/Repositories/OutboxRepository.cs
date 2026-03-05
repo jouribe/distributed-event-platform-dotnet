@@ -29,6 +29,14 @@ public sealed class OutboxRepository : IOutboxRepository
     /// </summary>
     public async Task InsertAsync(OutboxEvent outboxEvent, CancellationToken cancellationToken = default)
     {
+        _ = await InsertIfMissingAsync(outboxEvent, cancellationToken);
+    }
+
+    /// <summary>
+    /// Inserts a new outbox event only when an event entry does not already exist.
+    /// </summary>
+    public async Task<bool> InsertIfMissingAsync(OutboxEvent outboxEvent, CancellationToken cancellationToken = default)
+    {
         if (outboxEvent == null)
             throw new ArgumentNullException(nameof(outboxEvent));
 
@@ -50,14 +58,15 @@ public sealed class OutboxRepository : IOutboxRepository
         };
 
         var command = new CommandDefinition(
-            OutboxQueries.InsertOutboxEvent,
+            OutboxQueries.InsertOutboxEventIfMissing,
             parameters,
             commandTimeout: 30,
             cancellationToken: cancellationToken);
 
         try
         {
-            await connection.ExecuteAsync(command);
+            var affectedRows = await connection.ExecuteAsync(command);
+            return affectedRows > 0;
         }
         catch (Exception ex)
         {
@@ -146,6 +155,67 @@ public sealed class OutboxRepository : IOutboxRepository
         }
     }
 
+    public async Task<bool> MarkPublishedAndQueueEventAsync(
+        Guid outboxId,
+        Guid eventId,
+        CancellationToken cancellationToken = default)
+    {
+        if (outboxId == Guid.Empty)
+            throw new ArgumentException("OutboxId cannot be empty", nameof(outboxId));
+
+        if (eventId == Guid.Empty)
+            throw new ArgumentException("EventId cannot be empty", nameof(eventId));
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        using var transaction = connection.BeginTransaction();
+
+        try
+        {
+            var markPublishedCommand = new CommandDefinition(
+                OutboxQueries.MarkPublished,
+                new
+                {
+                    Id = outboxId,
+                    PublishedAt = DateTimeOffset.UtcNow
+                },
+                transaction: transaction,
+                commandTimeout: 30,
+                cancellationToken: cancellationToken);
+
+            var markedRows = await connection.ExecuteAsync(markPublishedCommand);
+            if (markedRows == 0)
+            {
+                transaction.Rollback();
+                return false;
+            }
+
+            var queueEventCommand = new CommandDefinition(
+                OutboxQueries.QueueEventIfReceived,
+                new { EventId = eventId },
+                transaction: transaction,
+                commandTimeout: 30,
+                cancellationToken: cancellationToken);
+
+            await connection.ExecuteAsync(queueEventCommand);
+
+            transaction.Commit();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            transaction.Rollback();
+
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
     /// <summary>
     /// Records a failed publish attempt.
     /// </summary>
@@ -210,6 +280,31 @@ public sealed class OutboxRepository : IOutboxRepository
         try
         {
             return await connection.ExecuteAsync(command);
+        }
+        catch (Exception ex)
+        {
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
+    public async Task<long> CountPendingAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        var command = new CommandDefinition(
+            OutboxQueries.CountPending,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        try
+        {
+            return await connection.ExecuteScalarAsync<long>(command);
         }
         catch (Exception ex)
         {

@@ -164,8 +164,8 @@ public class WorkerBootstrapTests
         {
             eventRepositoryMock = new Mock<IEventRepository>();
             eventRepositoryMock
-                .Setup(r => r.UpdateStatusAsync(It.IsAny<Guid>(), It.IsAny<EventPlatform.Domain.Events.EventStatus>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
+                .Setup(r => r.TryTransitionStatusAsync(It.IsAny<Guid>(), EventPlatform.Domain.Events.EventStatus.QUEUED, EventPlatform.Domain.Events.EventStatus.PROCESSING, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
             eventRepositoryMock
                 .Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(1);
@@ -203,3 +203,5 @@ public class WorkerBootstrapTests
             => ExecuteAsync(cancellationToken);
     }
 }
+
+

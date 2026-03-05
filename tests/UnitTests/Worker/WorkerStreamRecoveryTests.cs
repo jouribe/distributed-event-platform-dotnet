@@ -254,8 +254,8 @@ public class WorkerStreamRecoveryTests
         cancellation.CancelAfter(TimeSpan.FromSeconds(2));
 
         eventRepository
-            .Setup(r => r.UpdateStatusAsync(It.IsAny<Guid>(), It.IsAny<EventStatus>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .Setup(r => r.TryTransitionStatusAsync(It.IsAny<Guid>(), EventStatus.QUEUED, EventStatus.PROCESSING, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         eventRepository
             .Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
@@ -299,8 +299,9 @@ public class WorkerStreamRecoveryTests
 
         await worker.RunAsync(cancellation.Token);
 
-        eventRepository.Verify(r => r.UpdateStatusAsync(
+        eventRepository.Verify(r => r.TryTransitionStatusAsync(
                 eventId,
+                EventStatus.QUEUED,
                 EventStatus.PROCESSING,
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -310,7 +311,6 @@ public class WorkerStreamRecoveryTests
                 EventStatus.SUCCEEDED,
                 It.IsAny<CancellationToken>()),
             Times.Once);
-
         database.Verify(d => d.StreamAcknowledgeAsync(
                 options.Value.StreamName,
                 options.Value.GroupName,
@@ -343,8 +343,8 @@ public class WorkerStreamRecoveryTests
         cancellation.CancelAfter(TimeSpan.FromSeconds(2));
 
         eventRepository
-            .Setup(r => r.UpdateStatusAsync(It.IsAny<Guid>(), It.IsAny<EventStatus>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .Setup(r => r.TryTransitionStatusAsync(It.IsAny<Guid>(), EventStatus.QUEUED, EventStatus.PROCESSING, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         eventRepository
             .Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
@@ -397,8 +397,9 @@ public class WorkerStreamRecoveryTests
                 CommandFlags.None),
             Times.Once);
 
-        eventRepository.Verify(r => r.UpdateStatusAsync(
+        eventRepository.Verify(r => r.TryTransitionStatusAsync(
                 It.IsAny<Guid>(),
+                EventStatus.QUEUED,
                 EventStatus.PROCESSING,
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -477,8 +478,9 @@ public class WorkerStreamRecoveryTests
                 It.IsAny<CancellationToken>()),
             Times.Once);
 
-        eventRepository.Verify(r => r.UpdateStatusAsync(
+        eventRepository.Verify(r => r.TryTransitionStatusAsync(
                 It.IsAny<Guid>(),
+                It.IsAny<EventStatus>(),
                 It.IsAny<EventStatus>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
@@ -632,8 +634,8 @@ public class WorkerStreamRecoveryTests
         {
             eventRepositoryMock = new Mock<IEventRepository>();
             eventRepositoryMock
-                .Setup(r => r.UpdateStatusAsync(It.IsAny<Guid>(), It.IsAny<EventStatus>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
+                .Setup(r => r.TryTransitionStatusAsync(It.IsAny<Guid>(), EventStatus.QUEUED, EventStatus.PROCESSING, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
             eventRepositoryMock
                 .Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(1);
@@ -671,3 +673,6 @@ public class WorkerStreamRecoveryTests
             => ExecuteAsync(cancellationToken);
     }
 }
+
+
+

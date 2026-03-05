@@ -39,13 +39,21 @@ public sealed class InMemoryEventRepository : IEventRepository
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        // Insert event first
         await InsertAsync(envelope, cancellationToken);
 
-        // Insert outbox entry
         if (OutboxRepository != null)
         {
-            await OutboxRepository.InsertAsync(outboxEvent, cancellationToken);
+            await OutboxRepository.InsertIfMissingAsync(outboxEvent, cancellationToken);
+        }
+    }
+
+    public async Task EnsureOutboxEntryAsync(OutboxEvent outboxEvent, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (OutboxRepository != null)
+        {
+            await OutboxRepository.InsertIfMissingAsync(outboxEvent, cancellationToken);
         }
     }
 
@@ -62,11 +70,33 @@ public sealed class InMemoryEventRepository : IEventRepository
             if (!string.IsNullOrWhiteSpace(key))
             {
                 var current = _events[key];
-                _events[key] = newStatus == EventStatus.QUEUED ? current.MarkQueued() : current;
+                _events[key] = ApplyTransition(current, newStatus);
             }
         }
 
         return Task.CompletedTask;
+    }
+
+    public Task<bool> TryTransitionStatusAsync(
+        Guid eventId,
+        EventStatus expectedCurrentStatus,
+        EventStatus newStatus,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_gate)
+        {
+            var pair = _events.FirstOrDefault(x => x.Value.Id == eventId);
+            if (string.IsNullOrWhiteSpace(pair.Key))
+                return Task.FromResult(false);
+
+            if (pair.Value.Status != expectedCurrentStatus)
+                return Task.FromResult(false);
+
+            _events[pair.Key] = ApplyTransition(pair.Value, newStatus);
+            return Task.FromResult(true);
+        }
     }
 
     public Task<int> IncrementAttemptsAsync(Guid eventId, CancellationToken cancellationToken = default) => Task.FromResult(1);
@@ -105,6 +135,17 @@ public sealed class InMemoryEventRepository : IEventRepository
         {
             _events.Clear();
         }
+    }
+
+    private static EventEnvelope ApplyTransition(EventEnvelope current, EventStatus newStatus)
+    {
+        return newStatus switch
+        {
+            EventStatus.QUEUED when current.Status == EventStatus.RECEIVED => current.MarkQueued(),
+            EventStatus.PROCESSING when current.Status == EventStatus.QUEUED => current.MarkProcessing(),
+            EventStatus.SUCCEEDED when current.Status == EventStatus.PROCESSING => current.MarkSucceeded(),
+            _ => current
+        };
     }
 
     private static string ComposeKey(string tenantId, string idempotencyKey) => $"{tenantId}::{idempotencyKey}";

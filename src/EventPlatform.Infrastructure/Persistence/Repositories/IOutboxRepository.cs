@@ -18,6 +18,12 @@ public interface IOutboxRepository
     Task InsertAsync(OutboxEvent outboxEvent, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Inserts a new outbox event only when an entry for the same event does not already exist.
+    /// </summary>
+    /// <returns><c>true</c> when the row was inserted; otherwise <c>false</c>.</returns>
+    Task<bool> InsertIfMissingAsync(OutboxEvent outboxEvent, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Retrieves unpublished outbox events with pagination.
     /// </summary>
     /// <param name="limit">Maximum number of events to return.</param>
@@ -34,6 +40,13 @@ public interface IOutboxRepository
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     Task MarkPublishedAsync(Guid outboxId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Marks the outbox event as published and promotes the parent event from RECEIVED to QUEUED
+    /// when applicable, within a single transaction.
+    /// </summary>
+    /// <returns><c>true</c> when the outbox row transitioned to published; otherwise <c>false</c>.</returns>
+    Task<bool> MarkPublishedAndQueueEventAsync(Guid outboxId, Guid eventId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Records a failed publish attempt for an outbox event.
@@ -54,4 +67,10 @@ public interface IOutboxRepository
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The number of deleted rows.</returns>
     Task<long> DeletePublishedAsync(DateTimeOffset olderThan, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Counts unpublished outbox rows.
+    /// </summary>
+    Task<long> CountPendingAsync(CancellationToken cancellationToken = default);
 }
+

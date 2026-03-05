@@ -793,6 +793,87 @@ public sealed class EventRepository : IEventRepository
         }
     }
 
+    /// <summary>
+    /// Ensures an outbox entry exists for an already-persisted event.
+    /// </summary>
+    public async Task EnsureOutboxEntryAsync(OutboxEvent outboxEvent, CancellationToken cancellationToken = default)
+    {
+        if (outboxEvent == null)
+            throw new ArgumentNullException(nameof(outboxEvent));
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        var outboxParameters = new
+        {
+            outboxEvent.Id,
+            outboxEvent.EventId,
+            outboxEvent.StreamName,
+            Payload = outboxEvent.Payload.RootElement.ToString(),
+            outboxEvent.CreatedAt,
+            outboxEvent.PublishedAt,
+            outboxEvent.PublishAttempts,
+            outboxEvent.LastError
+        };
+
+        var outboxCommand = new CommandDefinition(
+            OutboxQueries.InsertOutboxEventIfMissing,
+            outboxParameters,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        try
+        {
+            await connection.ExecuteAsync(outboxCommand);
+        }
+        catch (Exception ex)
+        {
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
+
+    public async Task<bool> TryTransitionStatusAsync(
+        Guid eventId,
+        EventStatus expectedCurrentStatus,
+        EventStatus newStatus,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var connection = _connectionFactory.CreateConnection();
+        connection.Open();
+
+        var parameters = new
+        {
+            EventId = eventId,
+            ExpectedStatus = expectedCurrentStatus.ToString(),
+            NewStatus = newStatus.ToString()
+        };
+
+        var command = new CommandDefinition(
+            EventQueries.TryTransitionStatus,
+            parameters,
+            commandTimeout: 30,
+            cancellationToken: cancellationToken);
+
+        try
+        {
+            var affectedRows = await connection.ExecuteAsync(command);
+            return affectedRows > 0;
+        }
+        catch (Exception ex)
+        {
+            if (TryMapException(ex, out var mapped))
+                throw mapped;
+
+            throw;
+        }
+    }
     private static bool TryMapException(Exception exception, out Exception mapped)
     {
         if (TryMapSqlState(exception, out mapped))
@@ -914,3 +995,8 @@ public sealed class EventRepository : IEventRepository
         }
     }
 }
+
+
+
+
+

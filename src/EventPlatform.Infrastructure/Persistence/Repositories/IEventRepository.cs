@@ -29,6 +29,12 @@ public interface IEventRepository
     Task InsertWithOutboxAsync(EventEnvelope envelope, OutboxEvent outboxEvent, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Ensures an outbox entry exists for an already-persisted event without reinserting the event row.
+    /// The operation is idempotent per event identity.
+    /// </summary>
+    Task EnsureOutboxEntryAsync(OutboxEvent outboxEvent, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Inserts multiple event envelopes into the database in a single batch operation.
     /// </summary>
     /// <param name="envelopes">The collection of event envelopes to insert.</param>
@@ -50,6 +56,17 @@ public interface IEventRepository
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     Task UpdateStatusAsync(Guid eventId, EventStatus newStatus, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Attempts a guarded status transition and only applies it when the current status
+    /// matches <paramref name="expectedCurrentStatus"/>.
+    /// </summary>
+    /// <returns><c>true</c> when a row was updated; otherwise <c>false</c>.</returns>
+    Task<bool> TryTransitionStatusAsync(
+        Guid eventId,
+        EventStatus expectedCurrentStatus,
+        EventStatus newStatus,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Increments the attempt counter for an event by its ID and returns the new count.
@@ -158,3 +175,4 @@ public interface IEventRepository
         DateTimeOffset now,
         CancellationToken cancellationToken = default);
 }
+
