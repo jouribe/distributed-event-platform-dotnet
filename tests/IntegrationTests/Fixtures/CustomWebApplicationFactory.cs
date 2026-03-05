@@ -16,9 +16,11 @@ using Xunit;
 
 namespace EventPlatform.IntegrationTests.Fixtures;
 
-public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyncLifetime
+public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
-    private const string StreamName = "events:ingress";
+    protected const string StreamName = "events:ingress";
+    protected virtual bool EnableOutboxPublisher => true;
+    public string IngestionStreamName => StreamName;
     private readonly PostgreSqlContainer _postgresContainer = new PostgreSqlBuilder("postgres:16-alpine")
         .WithDatabase("event_platform")
         .WithUsername("event_platform")
@@ -67,6 +69,54 @@ WHERE tenant_id = @tenant_id AND idempotency_key = @idempotency_key;";
         return Convert.ToInt32(result);
     }
 
+    public async Task<long> CountPendingOutboxAsync()
+    {
+        await using var connection = new NpgsqlConnection(PostgresConnectionString);
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT COUNT(*)
+FROM event_platform.outbox_events
+WHERE published_at IS NULL;";
+
+        var result = await command.ExecuteScalarAsync();
+        return Convert.ToInt64(result);
+    }
+
+    public async Task<bool> IsOutboxPublishedForEventAsync(Guid eventId)
+    {
+        await using var connection = new NpgsqlConnection(PostgresConnectionString);
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT published_at IS NOT NULL
+FROM event_platform.outbox_events
+WHERE event_id = @event_id
+LIMIT 1;";
+        command.Parameters.AddWithValue("event_id", eventId);
+
+        var result = await command.ExecuteScalarAsync();
+        return result is bool value && value;
+    }
+
+    public async Task<string?> GetEventStatusByIdAsync(Guid eventId)
+    {
+        await using var connection = new NpgsqlConnection(PostgresConnectionString);
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = @"
+SELECT status
+FROM event_platform.events
+WHERE id = @event_id
+LIMIT 1;";
+        command.Parameters.AddWithValue("event_id", eventId);
+
+        var result = await command.ExecuteScalarAsync();
+        return result?.ToString();
+    }
     public async Task<Guid> GetCorrelationIdByTenantAndIdempotencyKeyAsync(string tenantId, string idempotencyKey)
     {
         await using var connection = new NpgsqlConnection(PostgresConnectionString);
@@ -205,11 +255,15 @@ LIMIT 1;";
             }
 
             services.RemoveAll<IConfigureOptions<OutboxPublisherOptions>>();
-            services.AddOutboxPublisher(options =>
+
+            if (EnableOutboxPublisher)
             {
-                options.PollIntervalMilliseconds = 100;
-                options.MaxBatchSize = 100;
-            });
+                services.AddOutboxPublisher(options =>
+                {
+                    options.PollIntervalMilliseconds = 100;
+                    options.MaxBatchSize = 100;
+                });
+            }
         });
     }
 
@@ -252,3 +306,6 @@ LIMIT 1;";
         throw new DirectoryNotFoundException("Could not resolve repository root from test execution directory.");
     }
 }
+
+
+

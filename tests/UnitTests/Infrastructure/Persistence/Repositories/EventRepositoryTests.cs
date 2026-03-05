@@ -418,6 +418,52 @@ public class EventRepositoryTests
             () => _sut.GetOldestRetryableAsync(DateTimeOffset.UtcNow, cancellationToken));
     }
 
+
+    [Fact]
+    public async Task EnsureOutboxEntryAsync_OpensConnection_WhenEnsuringOutboxRow()
+    {
+        // Arrange
+        var fakeConnection = new FakeDbConnection();
+
+        _mockConnectionFactory
+            .Setup(cf => cf.CreateConnection())
+            .Returns(fakeConnection);
+
+        var outboxPayload = JsonDocument.Parse("{\"type\":\"test\"}");
+        var outboxEvent = OutboxEvent.CreateNew(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "events:ingress",
+            outboxPayload);
+
+        // Act
+        await _sut.EnsureOutboxEntryAsync(outboxEvent);
+
+        // Assert
+        Assert.Equal(1, fakeConnection.OpenCount);
+    }
+
+    [Fact]
+    public async Task TryTransitionStatusAsync_ReturnsTrue_WhenUpdateAffectsRow()
+    {
+        // Arrange
+        var fakeConnection = new FakeDbConnection();
+
+        _mockConnectionFactory
+            .Setup(cf => cf.CreateConnection())
+            .Returns(fakeConnection);
+
+        // Act
+        var transitioned = await _sut.TryTransitionStatusAsync(
+            Guid.NewGuid(),
+            EventStatus.QUEUED,
+            EventStatus.PROCESSING,
+            CancellationToken.None);
+
+        // Assert
+        Assert.True(transitioned);
+        Assert.Equal(1, fakeConnection.OpenCount);
+    }
     /// <summary>
     /// Helper method to create a valid EventEnvelope for testing.
     /// </summary>
@@ -664,3 +710,5 @@ internal sealed class FakeDbParameterCollection : DbParameterCollection
             _parameters.Add(value);
     }
 }
+
+

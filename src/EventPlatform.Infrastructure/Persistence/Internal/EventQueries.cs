@@ -29,6 +29,15 @@ internal static class EventQueries
         WHERE id = @EventId";
 
     /// <summary>
+    /// SQL query to transition status only when the current status matches expected.
+    /// </summary>
+    public const string TryTransitionStatus = @"
+        UPDATE events
+        SET status = @NewStatus
+        WHERE id = @EventId
+          AND status = @ExpectedStatus";
+
+    /// <summary>
     /// SQL query to increment the attempts counter for an event and return the new count.
     /// </summary>
     public const string IncrementAttempts = @"
@@ -285,3 +294,5 @@ internal static class EventQueries
         LEFT JOIN inserted ins ON n.id = ins.id
         ORDER BY n.input_order;";
 }
+
+

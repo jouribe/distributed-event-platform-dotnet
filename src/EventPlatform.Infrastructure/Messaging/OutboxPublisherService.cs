@@ -1,3 +1,5 @@
+using System.Diagnostics.Metrics;
+using EventPlatform.Domain.Events;
 using EventPlatform.Application.Abstractions;
 using EventPlatform.Infrastructure.Persistence.Exceptions;
 using EventPlatform.Infrastructure.Persistence.Repositories;
@@ -39,21 +41,26 @@ public sealed class OutboxPublisherService : BackgroundService
         _logger.LogInformation("OutboxPublisherService started with poll interval {Interval}ms and max batch {BatchSize}",
             _options.PollIntervalMilliseconds, _options.MaxBatchSize);
 
+        var cycleCount = 0;
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 await PublishUnpublishedEventsAsync(stoppingToken);
+                cycleCount++;
 
                 // Periodic cleanup of old published entries (every 10 publication cycles)
-                if (DateTimeOffset.UtcNow.Ticks % 10 == 0)
+                if (cycleCount % 10 == 0)
                 {
                     await CleanupOldPublishedEventsAsync(stoppingToken);
                 }
+
+                var pending = await _outboxRepository.CountPendingAsync(stoppingToken);
+                OutboxMetrics.UpdatePendingCount(pending);
             }
             catch (OperationCanceledException)
             {
-                // Expected when service is shutting down
                 break;
             }
             catch (Exception ex)
@@ -61,7 +68,6 @@ public sealed class OutboxPublisherService : BackgroundService
                 _logger.LogError(ex, "Unexpected error in OutboxPublisherService, will retry after delay");
             }
 
-            // Wait before next poll
             try
             {
                 await Task.Delay(_options.PollIntervalMilliseconds, stoppingToken);
@@ -78,7 +84,6 @@ public sealed class OutboxPublisherService : BackgroundService
     private async Task PublishUnpublishedEventsAsync(CancellationToken cancellationToken)
     {
         var unpublished = await _outboxRepository.GetUnpublishedAsync(_options.MaxBatchSize, cancellationToken);
-
         if (unpublished.Count == 0)
             return;
 
@@ -88,53 +93,77 @@ public sealed class OutboxPublisherService : BackgroundService
         {
             try
             {
-                // The outbox stores the payload as JsonDocument, we pass it directly to the publisher
                 await _eventPublisher.PublishToStreamAsync(
                     outboxEvent.StreamName,
                     outboxEvent.Payload,
                     cancellationToken);
 
-                // Mark as published
-                await _outboxRepository.MarkPublishedAsync(outboxEvent.Id, cancellationToken);
+                var marked = await _outboxRepository.MarkPublishedAndQueueEventAsync(
+                    outboxEvent.Id,
+                    outboxEvent.EventId,
+                    cancellationToken);
 
-                _logger.LogDebug("Published outbox event {OutboxId} (event {EventId})",
-                    outboxEvent.Id, outboxEvent.EventId);
+                if (!marked)
+                {
+                    _logger.LogDebug(
+                        "Outbox already published or missing (outbox_id: {OutboxId}, event_id: {EventId})",
+                        outboxEvent.Id,
+                        outboxEvent.EventId);
+                    continue;
+                }
+
+                _logger.LogDebug(
+                    "Published outbox event (outbox_id: {OutboxId}, event_id: {EventId}, attempt: {Attempt})",
+                    outboxEvent.Id,
+                    outboxEvent.EventId,
+                    outboxEvent.PublishAttempts + 1);
             }
             catch (EventRepositoryTransientException ex)
             {
-                // Transient database error - record attempt and retry later
-                _logger.LogWarning(ex, "Transient error recording publish attempt for outbox {OutboxId}", outboxEvent.Id);
+                OutboxMetrics.PublishFailures.Add(1);
 
-                try
-                {
-                    await _outboxRepository.RecordPublishAttemptAsync(
-                        outboxEvent.Id,
-                        $"Transient DB error: {ex.Message}",
-                        cancellationToken);
-                }
-                catch (Exception recordEx)
-                {
-                    _logger.LogError(recordEx, "Failed to record publish attempt for outbox {OutboxId}", outboxEvent.Id);
-                }
+                _logger.LogWarning(
+                    ex,
+                    "Transient repository error while publishing outbox (outbox_id: {OutboxId}, event_id: {EventId}, attempt: {Attempt}, last_error: {LastError})",
+                    outboxEvent.Id,
+                    outboxEvent.EventId,
+                    outboxEvent.PublishAttempts + 1,
+                    ex.Message);
+
+                await SafeRecordPublishAttemptAsync(outboxEvent, $"Transient DB error: {ex.Message}", cancellationToken);
             }
             catch (Exception ex)
             {
-                // Publish failed (network, Redis down, etc)
-                _logger.LogWarning(ex, "Failed to publish outbox event {OutboxId}, attempt {Attempt}",
-                    outboxEvent.Id, outboxEvent.PublishAttempts + 1);
+                OutboxMetrics.PublishFailures.Add(1);
 
-                try
-                {
-                    await _outboxRepository.RecordPublishAttemptAsync(
-                        outboxEvent.Id,
-                        $"Publish error: {ex.Message}",
-                        cancellationToken);
-                }
-                catch (Exception recordEx)
-                {
-                    _logger.LogError(recordEx, "Failed to record publish attempt for outbox {OutboxId}", outboxEvent.Id);
-                }
+                _logger.LogWarning(
+                    ex,
+                    "Failed to publish outbox event (outbox_id: {OutboxId}, event_id: {EventId}, attempt: {Attempt}, last_error: {LastError})",
+                    outboxEvent.Id,
+                    outboxEvent.EventId,
+                    outboxEvent.PublishAttempts + 1,
+                    ex.Message);
+
+                await SafeRecordPublishAttemptAsync(outboxEvent, $"Publish error: {ex.Message}", cancellationToken);
             }
+        }
+    }
+
+    private async Task SafeRecordPublishAttemptAsync(OutboxEvent outboxEvent, string error, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _outboxRepository.RecordPublishAttemptAsync(outboxEvent.Id, error, cancellationToken);
+        }
+        catch (Exception recordEx)
+        {
+            _logger.LogError(
+                recordEx,
+                "Failed to record publish attempt (outbox_id: {OutboxId}, event_id: {EventId}, attempt: {Attempt}, last_error: {LastError})",
+                outboxEvent.Id,
+                outboxEvent.EventId,
+                outboxEvent.PublishAttempts + 1,
+                error);
         }
     }
 
@@ -142,7 +171,6 @@ public sealed class OutboxPublisherService : BackgroundService
     {
         try
         {
-            // Delete published events older than 24 hours
             var cutoffTime = DateTimeOffset.UtcNow.AddHours(-24);
             var deletedCount = await _outboxRepository.DeletePublishedAsync(cutoffTime, cancellationToken);
 
@@ -158,6 +186,23 @@ public sealed class OutboxPublisherService : BackgroundService
     }
 }
 
+public static class OutboxMetrics
+{
+    private static readonly Meter Meter = new("EventPlatform.Outbox", "1.0.0");
+    private static long _pendingCount;
+
+    public static readonly Counter<long> PublishFailures =
+        Meter.CreateCounter<long>("outbox_publish_failures_total");
+
+    private static readonly ObservableGauge<long> PendingGauge =
+        Meter.CreateObservableGauge<long>(
+            "outbox_pending_count",
+            () => new Measurement<long>(Interlocked.Read(ref _pendingCount)));
+
+    public static void UpdatePendingCount(long pendingCount)
+        => Interlocked.Exchange(ref _pendingCount, pendingCount);
+}
+
 /// <summary>
 /// Configuration options for the OutboxPublisherService.
 /// </summary>
@@ -169,3 +214,5 @@ public sealed class OutboxPublisherOptions
     public int PollIntervalMilliseconds { get; set; } = DefaultPollIntervalMilliseconds;
     public int MaxBatchSize { get; set; } = DefaultMaxBatchSize;
 }
+
+

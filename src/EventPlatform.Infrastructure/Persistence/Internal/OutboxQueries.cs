@@ -16,7 +16,13 @@ internal static class OutboxQueries
         VALUES (
             @Id, @EventId, @StreamName, @Payload::jsonb, @CreatedAt, @PublishedAt,
             @PublishAttempts, @LastError
-        )";
+        )
+        ON CONFLICT (event_id) DO NOTHING";
+
+    /// <summary>
+    /// SQL query to insert a new outbox event only when event_id is not present.
+    /// </summary>
+    public const string InsertOutboxEventIfMissing = InsertOutboxEvent;
 
     /// <summary>
     /// SQL query to retrieve unpublished outbox events ordered by creation time.
@@ -42,7 +48,17 @@ internal static class OutboxQueries
     public const string MarkPublished = @"
         UPDATE event_platform.outbox_events
         SET published_at = @PublishedAt, last_error = NULL
-        WHERE id = @Id";
+        WHERE id = @Id
+          AND published_at IS NULL";
+
+    /// <summary>
+    /// SQL query to promote the parent event to QUEUED only when currently RECEIVED.
+    /// </summary>
+    public const string QueueEventIfReceived = @"
+        UPDATE event_platform.events
+        SET status = 'QUEUED'
+        WHERE id = @EventId
+          AND status = 'RECEIVED'";
 
     /// <summary>
     /// SQL query to record a failed publish attempt.
@@ -58,4 +74,12 @@ internal static class OutboxQueries
     public const string DeletePublished = @"
         DELETE FROM event_platform.outbox_events
         WHERE published_at IS NOT NULL AND published_at < @OlderThan";
+
+    /// <summary>
+    /// SQL query to count unpublished outbox rows.
+    /// </summary>
+    public const string CountPending = @"
+        SELECT COUNT(*)
+        FROM event_platform.outbox_events
+        WHERE published_at IS NULL";
 }

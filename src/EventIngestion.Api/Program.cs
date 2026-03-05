@@ -200,7 +200,7 @@ app.MapPost("/events", async (
 
             try
             {
-                await eventRepository.InsertWithOutboxAsync(existing, outboxEvent, cancellationToken);
+                await eventRepository.EnsureOutboxEntryAsync(outboxEvent, cancellationToken);
             }
             catch (EventRepositoryConflictException)
             {
@@ -229,3 +229,4 @@ app.MapPost("/events", async (
 app.Run();
 
 public partial class Program;
+

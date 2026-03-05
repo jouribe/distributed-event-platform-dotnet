@@ -254,8 +254,8 @@ public class WorkerStreamRecoveryTests
         cancellation.CancelAfter(TimeSpan.FromSeconds(2));
 
         eventRepository
-            .Setup(r => r.UpdateStatusAsync(It.IsAny<Guid>(), It.IsAny<EventStatus>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .Setup(r => r.TryTransitionStatusAsync(It.IsAny<Guid>(), EventStatus.QUEUED, EventStatus.PROCESSING, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         eventRepository
             .Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
@@ -299,8 +299,9 @@ public class WorkerStreamRecoveryTests
 
         await worker.RunAsync(cancellation.Token);
 
-        eventRepository.Verify(r => r.UpdateStatusAsync(
+        eventRepository.Verify(r => r.TryTransitionStatusAsync(
                 eventId,
+                EventStatus.QUEUED,
                 EventStatus.PROCESSING,
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -310,7 +311,6 @@ public class WorkerStreamRecoveryTests
                 EventStatus.SUCCEEDED,
                 It.IsAny<CancellationToken>()),
             Times.Once);
-
         database.Verify(d => d.StreamAcknowledgeAsync(
                 options.Value.StreamName,
                 options.Value.GroupName,
@@ -343,8 +343,8 @@ public class WorkerStreamRecoveryTests
         cancellation.CancelAfter(TimeSpan.FromSeconds(2));
 
         eventRepository
-            .Setup(r => r.UpdateStatusAsync(It.IsAny<Guid>(), It.IsAny<EventStatus>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .Setup(r => r.TryTransitionStatusAsync(It.IsAny<Guid>(), EventStatus.QUEUED, EventStatus.PROCESSING, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         eventRepository
             .Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
@@ -397,8 +397,9 @@ public class WorkerStreamRecoveryTests
                 CommandFlags.None),
             Times.Once);
 
-        eventRepository.Verify(r => r.UpdateStatusAsync(
+        eventRepository.Verify(r => r.TryTransitionStatusAsync(
                 It.IsAny<Guid>(),
+                EventStatus.QUEUED,
                 EventStatus.PROCESSING,
                 It.IsAny<CancellationToken>()),
             Times.Once);
@@ -477,8 +478,9 @@ public class WorkerStreamRecoveryTests
                 It.IsAny<CancellationToken>()),
             Times.Once);
 
-        eventRepository.Verify(r => r.UpdateStatusAsync(
+        eventRepository.Verify(r => r.TryTransitionStatusAsync(
                 It.IsAny<Guid>(),
+                It.IsAny<EventStatus>(),
                 It.IsAny<EventStatus>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
@@ -601,6 +603,91 @@ public class WorkerStreamRecoveryTests
             Times.Once);
     }
 
+
+    [Fact]
+    public async Task ExecuteAsync_DoesNotAck_WhenTransitionIsNotApplied_AndEventIsStillReceived()
+    {
+        var options = CreateOptions(new RedisConsumerOptions
+        {
+            StreamName = "events:ingress",
+            GroupName = "event-worker",
+            ConsumerName = "consumer-1",
+            ReadBatchSize = 1,
+            EmptyReadDelay = 1,
+            ErrorDelayMilliseconds = 1,
+            DrainOnStartupMaxBatches = 0,
+            DrainOnStartupMaxMessages = 0,
+            ReclaimIntervalMilliseconds = 60_000
+        });
+
+        var bootstrapper = CreateBootstrapper();
+        var database = new Mock<IDatabase>();
+        var eventRepository = new Mock<IEventRepository>();
+        var eventHandler = new Mock<IWorkerEventHandler>();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.CancelAfter(TimeSpan.FromSeconds(2));
+
+        var eventId = Guid.NewGuid();
+        var receivedEnvelope = EventEnvelope.CreateNew(
+            id: eventId,
+            eventType: "user.created",
+            occurredAt: DateTimeOffset.UtcNow.AddSeconds(-1),
+            source: "worker-test",
+            tenantId: "tenant-test",
+            idempotencyKey: "idem-received",
+            correlationId: Guid.NewGuid(),
+            payload: System.Text.Json.JsonDocument.Parse("{\"user_id\":\"u-1\"}"));
+
+        eventRepository
+            .Setup(r => r.TryTransitionStatusAsync(eventId, EventStatus.QUEUED, EventStatus.PROCESSING, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        eventRepository
+            .Setup(r => r.GetByIdAsync(eventId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(receivedEnvelope);
+
+        database
+            .SetupSequence(d => d.StreamReadGroupAsync(
+                options.Value.StreamName,
+                options.Value.GroupName,
+                options.Value.ConsumerName,
+                ">",
+                options.Value.ReadBatchSize,
+                false,
+                null,
+                CommandFlags.None))
+            .ReturnsAsync(new[]
+            {
+                new StreamEntry("1700000000000-0", new[]
+                {
+                    new NameValueEntry("event_id", eventId.ToString())
+                })
+            })
+            .Returns(() =>
+            {
+                cancellation.Cancel();
+                return Task.FromResult(Array.Empty<StreamEntry>());
+            });
+
+        var worker = new TestableWorker(
+            NullLogger<EventWorker.Worker>.Instance,
+            CreateMultiplexer(database.Object).Object,
+            bootstrapper.Object,
+            CreateScopeFactory(eventRepository, eventHandler),
+            options);
+
+        await worker.RunAsync(cancellation.Token);
+
+        eventRepository.Verify(r => r.GetByIdAsync(eventId, It.IsAny<CancellationToken>()), Times.Once);
+        eventHandler.Verify(h => h.HandleAsync(It.IsAny<Guid>(), It.IsAny<StreamEntry>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        database.Verify(d => d.StreamAcknowledgeAsync(
+                options.Value.StreamName,
+                options.Value.GroupName,
+                It.IsAny<RedisValue>(),
+                CommandFlags.None),
+            Times.Never);
+    }
     private static OptionsWrapper<RedisConsumerOptions> CreateOptions(RedisConsumerOptions options)
         => new(options);
 
@@ -632,8 +719,8 @@ public class WorkerStreamRecoveryTests
         {
             eventRepositoryMock = new Mock<IEventRepository>();
             eventRepositoryMock
-                .Setup(r => r.UpdateStatusAsync(It.IsAny<Guid>(), It.IsAny<EventStatus>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
+                .Setup(r => r.TryTransitionStatusAsync(It.IsAny<Guid>(), EventStatus.QUEUED, EventStatus.PROCESSING, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
             eventRepositoryMock
                 .Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(1);
@@ -671,3 +758,7 @@ public class WorkerStreamRecoveryTests
             => ExecuteAsync(cancellationToken);
     }
 }
+
+
+
+

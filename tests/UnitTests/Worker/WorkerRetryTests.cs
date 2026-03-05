@@ -165,8 +165,8 @@ public class WorkerRetryTests
         var retryOptions = Options.Create(new RetryOptions { MaxAttempts = maxAttempts, MaxBackoffSeconds = 60 });
 
         var repoMock = new Mock<IEventRepository>();
-        repoMock.Setup(r => r.UpdateStatusAsync(It.IsAny<Guid>(), It.IsAny<EventStatus>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
+        repoMock.Setup(r => r.TryTransitionStatusAsync(It.IsAny<Guid>(), EventStatus.QUEUED, EventStatus.PROCESSING, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
         repoMock.Setup(r => r.IncrementAttemptsAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(attemptsAfterIncrement);
         repoMock.Setup(r => r.MarkRetryableFailureAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -273,3 +273,5 @@ public class WorkerRetryTests
             => ExecuteAsync(cancellationToken);
     }
 }
+
+

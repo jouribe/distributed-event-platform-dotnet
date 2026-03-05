@@ -12,15 +12,20 @@ public sealed class InMemoryOutboxRepository : IOutboxRepository
     private readonly object _gate = new();
 
     public Task InsertAsync(OutboxEvent outboxEvent, CancellationToken cancellationToken = default)
+        => InsertIfMissingAsync(outboxEvent, cancellationToken);
+
+    public Task<bool> InsertIfMissingAsync(OutboxEvent outboxEvent, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
         lock (_gate)
         {
-            _outboxes[outboxEvent.Id] = outboxEvent;
-        }
+            if (_outboxes.Values.Any(x => x.EventId == outboxEvent.EventId))
+                return Task.FromResult(false);
 
-        return Task.CompletedTask;
+            _outboxes[outboxEvent.Id] = outboxEvent;
+            return Task.FromResult(true);
+        }
     }
 
     public Task<IReadOnlyList<OutboxEvent>> GetUnpublishedAsync(int limit = 100, CancellationToken cancellationToken = default)
@@ -52,6 +57,16 @@ public sealed class InMemoryOutboxRepository : IOutboxRepository
         }
 
         return Task.CompletedTask;
+    }
+
+    public async Task<bool> MarkPublishedAndQueueEventAsync(
+        Guid outboxId,
+        Guid eventId,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await MarkPublishedAsync(outboxId, cancellationToken);
+        return true;
     }
 
     public Task RecordPublishAttemptAsync(Guid outboxId, string? error = null, CancellationToken cancellationToken = default)
@@ -86,6 +101,16 @@ public sealed class InMemoryOutboxRepository : IOutboxRepository
             }
 
             return Task.FromResult((long)toDelete.Count);
+        }
+    }
+
+    public Task<long> CountPendingAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (_gate)
+        {
+            return Task.FromResult((long)_outboxes.Values.Count(o => !o.IsPublished));
         }
     }
 
