@@ -1,4 +1,5 @@
 using EventPlatform.Domain.Events;
+using EventPlatform.Infrastructure.Diagnostics;
 using EventPlatform.Infrastructure.Persistence.Repositories;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -344,6 +345,8 @@ public class Worker : BackgroundService
 
     protected virtual Task<bool> TryHandleEntryAsync(StreamEntry entry, string phase, CancellationToken stoppingToken)
     {
+        using var scope = BeginEntryScope(entry);
+
         if (!TryResolveEventId(entry, out var eventId))
         {
             _logger.LogWarning(
@@ -526,7 +529,7 @@ public class Worker : BackgroundService
                         .ConfigureAwait(false);
 
                     _logger.LogError(
-                        "Event {EventId} reached max attempts ({MaxAttempts}) — transitioned to FAILED_TERMINAL (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
+                        "Event {EventId} reached max attempts ({MaxAttempts}) - transitioned to FAILED_TERMINAL (entry: {EntryId}, phase: {Phase}, stream: {Stream}, group: {Group}, consumer: {Consumer})",
                         eventId,
                         _retryOptions.MaxAttempts,
                         entry.Id,
@@ -574,6 +577,26 @@ public class Worker : BackgroundService
                 return false;
             }
         }
+    }
+    private IDisposable BeginEntryScope(StreamEntry entry)
+    {
+        var scopeState = new Dictionary<string, object?>
+        {
+            ["stream_entry_id"] = entry.Id.ToString()
+        };
+
+        if (TryResolveEventId(entry, out var eventId) && eventId != Guid.Empty)
+        {
+            scopeState["event_id"] = eventId;
+        }
+
+        var correlationId = CorrelationIdMetadata.TryReadFromStreamEntry(entry);
+        if (correlationId.HasValue)
+        {
+            scopeState["correlation_id"] = correlationId.Value;
+        }
+
+        return _logger.BeginScope(scopeState)!;
     }
     private static bool TryResolveEventId(StreamEntry entry, out Guid eventId)
     {
@@ -636,7 +659,3 @@ public class Worker : BackgroundService
         return false;
     }
 }
-
-
-
-
