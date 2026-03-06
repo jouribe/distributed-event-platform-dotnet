@@ -62,4 +62,16 @@ public sealed class CorrelationIdMetadataTests
 
         Assert.Null(result);
     }
+
+    [Fact]
+    public void TryReadFromStreamEntry_ReturnsNull_WhenMessageJsonRootIsNotAnObject()
+    {
+        var entry = new StreamEntry(
+            "1700000000000-0",
+            [new NameValueEntry("message", "\"not-an-object\"")]);
+
+        var result = CorrelationIdMetadata.TryReadFromStreamEntry(entry);
+
+        Assert.Null(result);
+    }
 }

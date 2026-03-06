@@ -38,6 +38,11 @@ public static class CorrelationIdMetadata
 
     private static Guid? TryReadFromJsonElement(JsonElement root)
     {
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
         if (!root.TryGetProperty("correlation_id", out var property))
         {
             return null;
