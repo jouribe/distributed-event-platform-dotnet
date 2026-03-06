@@ -1,4 +1,4 @@
-name: validate-pr-title
+name: PR Title Conventional Commits
 
 on:
   pull_request:
