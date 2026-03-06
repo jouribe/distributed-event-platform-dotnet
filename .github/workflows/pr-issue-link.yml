@@ -1,4 +1,4 @@
-name: enforce-issue-link
+name: PR Issue Link Enforcement
 
 on:
   pull_request:
