@@ -113,15 +113,18 @@ public class RetrySchedulerService : BackgroundService
         }
 
         // Phase 2 — publish to the Redis stream.
-        // If this fails the row is already QUEUED but has no stream entry, so the
-        // event would be permanently stranded (GetRetryableEventsAsync only selects
-        // FAILED_RETRYABLE rows). Restore to FAILED_RETRYABLE with a fresh backoff
-        // so the scheduler picks it up again. Use CancellationToken.None so the
-        // restore always runs, even when the cancellation token triggered the failure.
+        // Phase 1 has already committed the QUEUED status to the database, so this
+        // is the point of no return: the publish must complete regardless of whether
+        // the service is shutting down. Passing CancellationToken.None ensures that
+        // a concurrent cancellation request (e.g. during graceful shutdown or test
+        // teardown) does not abort the Redis write mid-flight and force an unnecessary
+        // rollback to FAILED_RETRYABLE.
+        // If the publish still fails (e.g. Redis is unreachable), the catch block
+        // restores the event to FAILED_RETRYABLE so the scheduler retries it later.
         try
         {
             await _eventPublisher
-                .PublishAsync(envelope, cancellationToken)
+                .PublishAsync(envelope, CancellationToken.None)
                 .ConfigureAwait(false);
 
             _logger.LogInformation(
