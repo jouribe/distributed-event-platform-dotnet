@@ -1,5 +1,6 @@
 using EventIngestion.Api.Correlation;
 using EventIngestion.Api.Contracts;
+using EventIngestion.Api.Health;
 using EventIngestion.Api.Ingestion;
 using EventPlatform.Application.Abstractions;
 using EventPlatform.Domain.Events;
@@ -8,12 +9,18 @@ using EventPlatform.Infrastructure.Messaging;
 using EventPlatform.Infrastructure.Persistence.Exceptions;
 using EventPlatform.Infrastructure.Persistence.Repositories;
 using FluentValidation;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
+builder.Services
+    .AddHealthChecks()
+    .AddCheck<DatabaseReadinessHealthCheck>("postgres", HealthStatus.Unhealthy, ["ready"])
+    .AddCheck<RedisReadinessHealthCheck>("redis", HealthStatus.Unhealthy, ["ready"]);
 builder.Services.AddHttpsRedirection(options =>
 {
     options.HttpsPort = builder.Configuration.GetValue<int?>("HttpsRedirection:HttpsPort") ?? 7267;
@@ -66,6 +73,22 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseMiddleware<CorrelationIdMiddleware>();
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    Predicate = registration => registration.Tags.Contains("ready"),
+    ResponseWriter = async (httpContext, report) =>
+    {
+        httpContext.Response.ContentType = "application/json";
+
+        await JsonSerializer.SerializeAsync(httpContext.Response.Body, new
+        {
+            status = report.Status.ToString(),
+            checks = report.Entries.ToDictionary(
+                entry => entry.Key,
+                entry => entry.Value.Status.ToString())
+        });
+    }
+});
 
 app.MapPost("/events", async (
     IngestEventRequest request,
