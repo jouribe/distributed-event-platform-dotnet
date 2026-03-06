@@ -16,18 +16,23 @@
 - Workers are stateless and horizontally scalable.
 - Duplicates are expected; idempotency is mandatory.
 
+## Current scope
+
+- In scope: ingestion, async processing, idempotency, retry, event tracking, and baseline observability.
+- Out of scope for this release: full runbooks and next-phase reliability improvements.
+
 ## Components
 
 Client
-  ↓
+  ->
 EventIngestion.Api
-  ↓
+  ->
 PostgreSQL (source of truth)
-  ↓
+  ->
 Redis Streams
-  ↓
+  ->
 EventWorker
-  ↓
+  ->
 PostgreSQL (status transitions)
 
 ## Runtime boundaries
@@ -36,7 +41,7 @@ PostgreSQL (status transitions)
   - Validates request envelope
   - Enforces ingress idempotency
   - Persists event as durable record
-  - Publishes (or schedules publish via outbox)
+  - Publishes to Redis in the current release flow
 
 - `EventWorker`
   - Reads from Redis Consumer Group
@@ -44,7 +49,7 @@ PostgreSQL (status transitions)
   - Executes handler by `event_type`
   - Applies retry / terminal failure policy
 
-## Processing Flow
+## Processing flow
 
 1. Client submits event.
 2. API validates and persists event (RECEIVED).
@@ -61,7 +66,13 @@ PostgreSQL (status transitions)
 - Worker crashes before ACK are safe (redelivery expected).
 - Duplicate deliveries are handled by idempotent handlers.
 
-## Key Guarantees
+## Known limitations
+
+- Outbox is not mandatory in the current release flow.
+- DLQ flow is not implemented yet.
+- PEL reclaim (`XAUTOCLAIM`) is not implemented yet.
+
+## Key guarantees
 
 - Ingress idempotency.
 - At-least-once processing.

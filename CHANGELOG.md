@@ -18,6 +18,12 @@ This project adheres to Semantic Versioning.
 - Retry mechanism with exponential backoff
 - Persist and rehydrate `source` field for improved traceability (#36)
 
+### Changed
+- Documentation updated to reflect the current release scope:
+  - In scope: ingestion, async processing, idempotency, retry, event tracking, and baseline observability.
+  - Known limitations: no mandatory outbox flow, no DLQ flow, and no PEL reclaim (`XAUTOCLAIM`) yet.
+  - Out of scope: full operational runbooks and next-phase reliability improvements.
+
 ---
 
 ## [0.1.0] - 2025-02-22
