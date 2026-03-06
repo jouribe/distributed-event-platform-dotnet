@@ -9,145 +9,128 @@
 A production-oriented distributed event processing platform built with
 **.NET 10**, **Redis Streams**, and **PostgreSQL**.
 
-This project demonstrates real-world distributed systems concepts
-including:
+## Current Release Scope
 
--   Idempotent ingestion
--   At-least-once delivery semantics
--   Async background processing
--   Retry with exponential backoff
--   Event state tracking
--   Correlation ID propagation
--   Clean Architecture boundaries
+This release covers:
+- Idempotent ingestion
+- Async background processing
+- Retry with exponential backoff
+- Event lifecycle tracking
+- Correlation and traceability fields
+- Baseline observability signals
 
-------------------------------------------------------------------------
+## Architecture Overview
 
-## 🧠 Why This Project?
+- **EventIngestion.Api**
+  - Receives events via HTTP
+  - Enforces idempotency
+  - Persists event state in PostgreSQL
+  - Publishes to Redis Streams (directly in current flow)
+- **EventWorker**
+  - Consumes from Redis Streams (Consumer Groups)
+  - Processes events asynchronously
+  - Applies retry policies
+  - Updates event lifecycle state
+  - Acknowledges messages after durable status transition
+- **PostgreSQL**
+  - Source of truth
+  - Stores event envelope + status transitions
+- **Redis Streams**
+  - Transport layer
+  - At-least-once delivery
 
-Modern systems must handle:
+## Event Lifecycle
 
--   Network failures
--   Duplicate requests
--   Process crashes
--   Message redelivery
--   Eventual consistency
+RECEIVED
+-> QUEUED
+-> PROCESSING
+-> SUCCEEDED
 
-This platform is designed to model those realities and implement safe,
-resilient processing patterns.
+On retryable failure:
 
-It is not a CRUD app.
+PROCESSING
+-> FAILED_RETRYABLE
+-> QUEUED (after delay)
 
-It is infrastructure.
+On terminal failure:
 
-------------------------------------------------------------------------
+PROCESSING
+-> FAILED_TERMINAL
 
-## 🏗 Architecture Overview
+## Known Limitations
 
--   **EventIngestion.Api**
-    -   Receives events via HTTP
-    -   Enforces idempotency
-    -   Persists event state in PostgreSQL
-    -   Publishes to Redis Streams
--   **EventWorker**
-    -   Consumes from Redis Streams (Consumer Groups)
-    -   Processes events asynchronously
-    -   Applies retry policies
-    -   Updates event lifecycle state
-    -   Acknowledges messages safely
--   **PostgreSQL**
-    -   Source of truth
-    -   Stores event envelope + status transitions
--   **Redis Streams**
-    -   Transport layer
-    -   At-least-once delivery
+- Outbox is not mandatory in the current release flow.
+- DLQ workflow is not implemented yet.
+- PEL reclaim flow is not implemented yet.
 
-------------------------------------------------------------------------
+## Out of Scope (This Release)
 
-## 🔄 Event Lifecycle
+- Complete operational runbooks.
+- Post-release reliability hardening and platform improvements.
 
-RECEIVED\
-→ QUEUED\
-→ PROCESSING\
-→ SUCCEEDED
+## Local Development
 
-On failure:
+### 1. Start infrastructure
 
-PROCESSING\
-→ FAILED_RETRYABLE\
-→ QUEUED (after delay)
-
-or
-
-→ FAILED_TERMINAL
-
-------------------------------------------------------------------------
-
-## 🚀 Local Development
-
-### 1️⃣ Start infrastructure
-
+```bash
 docker compose -f deployments/docker-compose.yml up -d
+```
 
-### 2️⃣ Apply database migrations
+### 2. Apply database migrations
 
 PowerShell:
 
-$env:EVENTPLATFORM_DB="Host=localhost;Port=5432;Database=event_platform;Username=event_platform;Password=event_platform"
+```powershell
+$env:EVENTPLATFORM_DB="Host=localhost;Port=54320;Database=event_platform;Username=event_platform;Password=event_platform"
 dotnet run --project src/EventPlatform.DbMigrator
+```
 
-### 3️⃣ Run API
+### 3. Run API
 
+```bash
 dotnet run --project src/EventIngestion.Api
+```
 
-### 4️⃣ Run Worker
+### 4. Run Worker
 
+```bash
 dotnet run --project src/EventWorker
+```
 
-------------------------------------------------------------------------
+## Tech Stack
 
-## 📦 Tech Stack
+- .NET 10
+- ASP.NET Core (Minimal APIs)
+- Redis Streams
+- PostgreSQL
+- Dapper
+- BackgroundService
+- Clean Architecture
 
--   .NET 10
--   ASP.NET Core (Minimal APIs)
--   Redis Streams
--   PostgreSQL
--   Dapper
--   BackgroundService
--   Clean Architecture
-
-------------------------------------------------------------------------
-
-## 📚 Documentation
+## Documentation
 
 See `/docs` folder for:
+- Architecture decisions (ADR)
+- Event contract
+- Processing semantics
+- Retry strategy
+- Failure scenarios
+- Observability design
 
--   Architecture decisions (ADR)
--   Event contract
--   Processing semantics
--   Retry strategy
--   Failure scenarios
--   Observability design
+## Testing
 
-------------------------------------------------------------------------
+- Unit tests
+- Integration tests with Testcontainers
+- End-to-end ingestion -> processing flow
 
-## 🧪 Testing
+## Roadmap
 
--   Unit tests
--   Integration tests with Testcontainers
--   End-to-end ingestion → processing flow
+- Outbox enforcement for publish reliability
+- Dead Letter Queue (DLQ)
+- Pending Entries List reclaim and recovery flow
+- Expanded metrics and dashboards
+- Full operational runbooks
 
-------------------------------------------------------------------------
-
-## 🔮 Roadmap
-
--   Dead Letter Queue (DLQ)
--   Outbox pattern
--   Metrics (Prometheus)
--   Dashboard (real-time monitoring)
--   Modular extraction as reusable packages
-
-------------------------------------------------------------------------
-
-## 📄 License
+## License
 
 MIT
