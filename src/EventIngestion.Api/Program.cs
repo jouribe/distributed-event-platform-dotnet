@@ -1,3 +1,4 @@
+using EventIngestion.Api.Correlation;
 using EventIngestion.Api.Contracts;
 using EventIngestion.Api.Ingestion;
 using EventPlatform.Application.Abstractions;
@@ -64,6 +65,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseMiddleware<CorrelationIdMiddleware>();
 
 app.MapPost("/events", async (
     IngestEventRequest request,
@@ -76,18 +78,16 @@ app.MapPost("/events", async (
     IngestionMetrics.RequestsTotal.Add(1);
 
     var idempotencyHeader = httpRequest.Headers["Idempotency-Key"].FirstOrDefault();
-    var correlationHeader = httpRequest.Headers["X-Correlation-Id"].FirstOrDefault();
 
     var effectiveIdempotencyKey = string.IsNullOrWhiteSpace(idempotencyHeader)
         ? request.IdempotencyKey?.Trim()
         : idempotencyHeader.Trim();
 
-    Guid? correlationIdFromHeader = null;
-    if (!string.IsNullOrWhiteSpace(correlationHeader)
-        && Guid.TryParse(correlationHeader, out var parsedCorrelation))
-    {
-        correlationIdFromHeader = parsedCorrelation;
-    }
+    var correlationId = HttpCorrelationContext.Resolve(
+        httpRequest.HttpContext,
+        request.CorrelationId is { } requestCorrelationId && requestCorrelationId != Guid.Empty
+            ? requestCorrelationId
+            : null);
 
     var command = new IngestEventCommand(
         EventId: request.EventId is { } requestEventId && requestEventId != Guid.Empty
@@ -98,10 +98,7 @@ app.MapPost("/events", async (
         Source: request.Source?.Trim() ?? string.Empty,
         TenantId: request.TenantId?.Trim() ?? string.Empty,
         IdempotencyKey: effectiveIdempotencyKey ?? string.Empty,
-        CorrelationId: correlationIdFromHeader
-            ?? (request.CorrelationId is { } requestCorrelationId && requestCorrelationId != Guid.Empty
-                ? requestCorrelationId
-                : Guid.NewGuid()),
+        CorrelationId: correlationId,
         Payload: request.Payload);
 
     var validationResult = await validator.ValidateAsync(command, cancellationToken);
@@ -175,6 +172,15 @@ app.MapPost("/events", async (
         }
 
         IngestionMetrics.IdempotentReplayCount.Add(1);
+        HttpCorrelationContext.Set(httpRequest.HttpContext, existing.CorrelationId);
+
+        using var replayScope = logger.BeginScope(new Dictionary<string, object>
+        {
+            ["correlation_id"] = existing.CorrelationId,
+            ["event_id"] = existing.Id,
+            ["tenant_id"] = existing.TenantId,
+            ["event_type"] = existing.EventType
+        });
 
         if (existing.Status == EventStatus.RECEIVED)
         {
@@ -215,7 +221,6 @@ app.MapPost("/events", async (
                 Status: EventStatus.QUEUED.ToString(),
                 IdempotencyReplayed: true));
         }
-
         logger.LogInformation("Idempotency replay detected. Returning existing event without republish.");
 
         return Results.Ok(new IngestEventResponse(
@@ -229,4 +234,3 @@ app.MapPost("/events", async (
 app.Run();
 
 public partial class Program;
-

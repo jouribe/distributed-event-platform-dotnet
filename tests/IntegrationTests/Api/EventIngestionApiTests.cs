@@ -46,11 +46,17 @@ public class EventIngestionApiTests : IClassFixture<CustomWebApplicationFactory>
         var response = await client.SendAsync(message);
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.True(response.Headers.TryGetValues("X-Correlation-Id", out var correlationHeaderValues));
+        Assert.True(Guid.TryParse(Assert.Single(correlationHeaderValues), out var responseCorrelationId));
+        Assert.NotEqual(Guid.Empty, responseCorrelationId);
 
         await _factory.WaitForStreamLengthAsync(expectedLength: 1, timeout: TimeSpan.FromSeconds(10));
 
         var eventRows = await _factory.CountEventsByTenantAndIdempotencyKeyAsync(tenantId, idempotencyKey);
         Assert.Equal(1, eventRows);
+
+        var storedCorrelationId = await _factory.GetCorrelationIdByTenantAndIdempotencyKeyAsync(tenantId, idempotencyKey);
+        Assert.Equal(storedCorrelationId, responseCorrelationId);
 
         var streamLength = await _factory.GetStreamLengthAsync();
         Assert.Equal(1, streamLength);
@@ -101,11 +107,17 @@ public class EventIngestionApiTests : IClassFixture<CustomWebApplicationFactory>
         var body = await secondResponse.Content.ReadFromJsonAsync<IngestResponseModel>();
         Assert.NotNull(body);
         Assert.True(body.IdempotencyReplayed);
+        Assert.True(secondResponse.Headers.TryGetValues("X-Correlation-Id", out var correlationHeaderValues));
+        Assert.True(Guid.TryParse(Assert.Single(correlationHeaderValues), out var replayCorrelationId));
+        Assert.NotEqual(Guid.Empty, replayCorrelationId);
 
         await _factory.WaitForStreamLengthAsync(expectedLength: 1, timeout: TimeSpan.FromSeconds(5));
 
         var eventRows = await _factory.CountEventsByTenantAndIdempotencyKeyAsync(tenantId, idempotencyKey);
         Assert.Equal(1, eventRows);
+
+        var storedCorrelationId = await _factory.GetCorrelationIdByTenantAndIdempotencyKeyAsync(tenantId, idempotencyKey);
+        Assert.Equal(storedCorrelationId.ToString(), replayCorrelationId.ToString());
 
         var streamLength = await _factory.GetStreamLengthAsync();
         Assert.Equal(1, streamLength);
@@ -188,6 +200,8 @@ public class EventIngestionApiTests : IClassFixture<CustomWebApplicationFactory>
         var response = await client.SendAsync(message);
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.True(response.Headers.TryGetValues("X-Correlation-Id", out var correlationHeaderValues));
+        Assert.Equal(headerCorrelationId.ToString(), Assert.Single(correlationHeaderValues));
 
         await _factory.WaitForStreamLengthAsync(expectedLength: 1, timeout: TimeSpan.FromSeconds(10));
 
@@ -229,6 +243,8 @@ public class EventIngestionApiTests : IClassFixture<CustomWebApplicationFactory>
         var response = await client.SendAsync(message);
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.True(response.Headers.TryGetValues("X-Correlation-Id", out var correlationHeaderValues));
+        Assert.Equal(bodyCorrelationId.ToString(), Assert.Single(correlationHeaderValues));
 
         await _factory.WaitForStreamLengthAsync(expectedLength: 1, timeout: TimeSpan.FromSeconds(10));
 
@@ -268,10 +284,13 @@ public class EventIngestionApiTests : IClassFixture<CustomWebApplicationFactory>
         var response = await client.SendAsync(message);
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.True(response.Headers.TryGetValues("X-Correlation-Id", out var correlationHeaderValues));
+        var responseCorrelationId = Guid.Parse(Assert.Single(correlationHeaderValues));
 
         await _factory.WaitForStreamLengthAsync(expectedLength: 1, timeout: TimeSpan.FromSeconds(10));
 
         var storedCorrelationId = await _factory.GetCorrelationIdByTenantAndIdempotencyKeyAsync(tenantId, idempotencyKey);
         Assert.NotEqual(Guid.Empty, storedCorrelationId);
+        Assert.Equal(storedCorrelationId, responseCorrelationId);
     }
 }

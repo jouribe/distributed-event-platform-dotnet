@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using EventPlatform.Domain.Events;
 using EventPlatform.Application.Abstractions;
+using EventPlatform.Infrastructure.Diagnostics;
 using EventPlatform.Infrastructure.Persistence.Exceptions;
 using EventPlatform.Infrastructure.Persistence.Repositories;
 using Microsoft.Extensions.Hosting;
@@ -91,6 +92,8 @@ public sealed class OutboxPublisherService : BackgroundService
 
         foreach (var outboxEvent in unpublished)
         {
+            using var scope = BeginPublishScope(outboxEvent);
+
             try
             {
                 await _eventPublisher.PublishToStreamAsync(
@@ -149,6 +152,21 @@ public sealed class OutboxPublisherService : BackgroundService
         }
     }
 
+    private IDisposable BeginPublishScope(OutboxEvent outboxEvent)
+    {
+        var scopeState = new Dictionary<string, object?>
+        {
+            ["event_id"] = outboxEvent.EventId
+        };
+
+        var correlationId = CorrelationIdMetadata.TryReadFromOutboxPayload(outboxEvent.Payload);
+        if (correlationId.HasValue)
+        {
+            scopeState["correlation_id"] = correlationId.Value;
+        }
+
+        return _logger.BeginScope(scopeState)!;
+    }
     private async Task SafeRecordPublishAttemptAsync(OutboxEvent outboxEvent, string error, CancellationToken cancellationToken)
     {
         try
@@ -214,5 +232,3 @@ public sealed class OutboxPublisherOptions
     public int PollIntervalMilliseconds { get; set; } = DefaultPollIntervalMilliseconds;
     public int MaxBatchSize { get; set; } = DefaultMaxBatchSize;
 }
-
-
