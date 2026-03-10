@@ -24,10 +24,13 @@ This release covers:
 - **EventIngestion.Api**
   - Receives events via HTTP
   - Enforces idempotency
-  - Persists event state in PostgreSQL
-  - Publishes to Redis Streams (directly in current flow)
+  - Persists event envelope and outbox row atomically in PostgreSQL
+- **OutboxPublisherService** (hosted inside `EventIngestion.Api`)
+  - Polls unpublished outbox rows
+  - Publishes to Redis Streams and transitions event from `RECEIVED → QUEUED`
 - **EventWorker**
-  - Consumes from Redis Streams (Consumer Groups)
+  - Consumes from Redis Streams via Consumer Groups (`XREADGROUP`)
+  - Reclaims stale PEL messages via `XAUTOCLAIM` (with `XPENDING`+`XCLAIM` fallback for older Redis)
   - Processes events asynchronously
   - Applies retry policies
   - Updates event lifecycle state
@@ -59,9 +62,8 @@ PROCESSING
 
 ## Known Limitations
 
-- Outbox is not mandatory in the current release flow.
 - DLQ workflow is not implemented yet.
-- PEL reclaim flow is not implemented yet.
+- Manual intervention is required for `FAILED_TERMINAL` events.
 
 ## Out of Scope (This Release)
 
@@ -125,9 +127,7 @@ See `/docs` folder for:
 
 ## Roadmap
 
-- Outbox enforcement for publish reliability
 - Dead Letter Queue (DLQ)
-- Pending Entries List reclaim and recovery flow
 - Expanded metrics and dashboards
 - Full operational runbooks
 
