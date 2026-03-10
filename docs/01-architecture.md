@@ -40,8 +40,13 @@ PostgreSQL (status transitions)
 - `EventIngestion.Api`
   - Validates request envelope
   - Enforces ingress idempotency
-  - Persists event as durable record
-  - Publishes to Redis in the current release flow
+  - Persists event and outbox row atomically (single transaction)
+
+- `OutboxPublisherService` (hosted inside `EventIngestion.Api` process)
+  - Polls unpublished outbox rows
+  - Publishes each event to Redis via `IEventPublisher`
+  - Atomically marks the outbox row as published and transitions the event from `RECEIVED → QUEUED`
+  - Tracks publish failures per row for observability
 
 - `EventWorker`
   - Reads from Redis Consumer Group
@@ -52,12 +57,12 @@ PostgreSQL (status transitions)
 ## Processing flow
 
 1. Client submits event.
-2. API validates and persists event (RECEIVED).
-3. API publishes event to Redis.
-4. Worker consumes event.
-5. Worker updates state to PROCESSING.
+2. API validates and persists event + outbox row atomically (status: `RECEIVED`).
+3. `OutboxPublisherService` polls unpublished outbox rows, publishes to Redis, and transitions event to `QUEUED`.
+4. Worker consumes event from Redis Consumer Group.
+5. Worker updates state to `PROCESSING`.
 6. Worker executes handler.
-7. Worker sets SUCCEEDED or FAILED_*.
+7. Worker sets `SUCCEEDED` or `FAILED_*`.
 8. Worker ACKs message.
 
 ## Reliability notes
@@ -68,9 +73,8 @@ PostgreSQL (status transitions)
 
 ## Known limitations
 
-- Outbox is not mandatory in the current release flow.
 - DLQ flow is not implemented yet.
-- PEL reclaim (`XAUTOCLAIM`) is not implemented yet.
+- Manual intervention or external routing is required for `FAILED_TERMINAL` events.
 
 ## Key guarantees
 
