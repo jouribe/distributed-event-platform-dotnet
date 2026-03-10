@@ -20,6 +20,12 @@ public sealed record EventEnvelope
     public DateTimeOffset? NextAttemptAt { get; private init; }
     public string? LastError { get; private init; }
 
+    /// <summary>
+    /// Schema version of the event payload. Defaults to 1 for all new events.
+    /// Persisted to allow future payload structure evolution without breaking existing consumers.
+    /// </summary>
+    public short SchemaVersion { get; init; }
+
     //private EventEnvelope() { } // optional (ORM)
 
     /// <summary>
@@ -38,7 +44,8 @@ public sealed record EventEnvelope
         EventStatus status,
         int attempts,
         DateTimeOffset? nextAttemptAt,
-        string? lastError)
+        string? lastError,
+        short schemaVersion)
     {
         if (id == Guid.Empty) throw new ArgumentException("Event id cannot be empty", nameof(id));
         if (string.IsNullOrWhiteSpace(eventType)) throw new ArgumentException("EventType is required", nameof(eventType));
@@ -48,6 +55,7 @@ public sealed record EventEnvelope
         if (payload is null) throw new ArgumentNullException(nameof(payload));
         if (occurredAt > receivedAt) throw new ArgumentException("OccurredAt cannot be later than ReceivedAt");
         if (attempts < 0) throw new ArgumentOutOfRangeException(nameof(attempts), "Attempts cannot be negative");
+        if (schemaVersion < 1) throw new ArgumentOutOfRangeException(nameof(schemaVersion), "SchemaVersion must be >= 1");
 
         if (status == EventStatus.FAILED_RETRYABLE && nextAttemptAt is null)
             throw new ArgumentException("NextAttemptAt is required when status is FAILED_RETRYABLE", nameof(nextAttemptAt));
@@ -72,11 +80,13 @@ public sealed record EventEnvelope
         Attempts = attempts;
         NextAttemptAt = nextAttemptAt;
         LastError = lastError;
+        SchemaVersion = schemaVersion;
     }
 
     /// <summary>
     /// Creates a new envelope in <see cref="EventStatus.RECEIVED"/> with attempts initialized to 0.
     /// </summary>
+    /// <param name="schemaVersion">Schema version of the payload structure. Defaults to 1.</param>
     public static EventEnvelope CreateNew(
         Guid id,
         string eventType,
@@ -85,7 +95,8 @@ public sealed record EventEnvelope
         string tenantId,
         string? idempotencyKey,
         Guid correlationId,
-        JsonDocument payload)
+        JsonDocument payload,
+        short schemaVersion = 1)
     {
         return new EventEnvelope(
             id: id,
@@ -100,7 +111,8 @@ public sealed record EventEnvelope
             status: EventStatus.RECEIVED,
             attempts: 0,
             nextAttemptAt: null,
-            lastError: null);
+            lastError: null,
+            schemaVersion: schemaVersion);
     }
 
     /// <summary>
@@ -208,6 +220,7 @@ public sealed record EventEnvelope
     /// <param name="attempts">The number of processing attempts.</param>
     /// <param name="nextAttemptAt">The scheduled time for the next retry attempt.</param>
     /// <param name="lastError">The last error message, if any.</param>
+    /// <param name="schemaVersion">Schema version stored in the database row. Defaults to 1 for backward compatibility.</param>
     /// <returns>A reconstructed EventEnvelope instance.</returns>
     public static EventEnvelope RehydrateFromPersistence(
         Guid id,
@@ -222,7 +235,8 @@ public sealed record EventEnvelope
         EventStatus status,
         int attempts,
         DateTimeOffset? nextAttemptAt,
-        string? lastError)
+        string? lastError,
+        short schemaVersion = 1)
     {
         return new EventEnvelope(
             id: id,
@@ -237,6 +251,7 @@ public sealed record EventEnvelope
             status: status,
             attempts: attempts,
             nextAttemptAt: nextAttemptAt,
-            lastError: lastError);
+            lastError: lastError,
+            schemaVersion: schemaVersion);
     }
 }

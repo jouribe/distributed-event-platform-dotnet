@@ -12,12 +12,12 @@ internal static class EventQueries
         INSERT INTO events (
             id, tenant_id, event_type, occurred_at, received_at,
             payload, idempotency_key, correlation_id, status, attempts,
-            next_attempt_at, last_error, source
+            next_attempt_at, last_error, source, schema_version
         )
         VALUES (
             @Id, @TenantId, @EventType, @OccurredAt, @ReceivedAt,
             @Payload::jsonb, @IdempotencyKey, @CorrelationId, @Status, @Attempts,
-            @NextAttemptAt, @LastError, @Source
+            @NextAttemptAt, @LastError, @Source, @SchemaVersion
         )";
 
     /// <summary>
@@ -94,7 +94,8 @@ internal static class EventQueries
             attempts AS Attempts,
             next_attempt_at AS NextAttemptAt,
             last_error AS LastError,
-            source AS Source
+            source AS Source,
+            schema_version AS SchemaVersion
         FROM events
         WHERE id = @EventId
         LIMIT 1";
@@ -113,7 +114,8 @@ internal static class EventQueries
                         attempts AS Attempts,
                         next_attempt_at AS NextAttemptAt,
                         last_error AS LastError,
-                        source AS Source
+                        source AS Source,
+                        schema_version AS SchemaVersion
         FROM events
         WHERE tenant_id = @TenantId
           AND idempotency_key = @IdempotencyKey
@@ -138,7 +140,8 @@ internal static class EventQueries
                         attempts AS Attempts,
                         next_attempt_at AS NextAttemptAt,
                         last_error AS LastError,
-                        source AS Source
+                        source AS Source,
+                        schema_version AS SchemaVersion
         FROM events
         WHERE status = @Status
           AND next_attempt_at <= @Now
@@ -172,7 +175,8 @@ internal static class EventQueries
             attempts AS Attempts,
             next_attempt_at AS NextAttemptAt,
             last_error AS LastError,
-            source AS Source
+            source AS Source,
+            schema_version AS SchemaVersion
         FROM events
         WHERE correlation_id = @CorrelationId
         ORDER BY received_at ASC, id ASC";
@@ -194,7 +198,8 @@ internal static class EventQueries
             attempts AS Attempts,
             next_attempt_at AS NextAttemptAt,
             last_error AS LastError,
-            source AS Source
+            source AS Source,
+            schema_version AS SchemaVersion
         FROM events
         WHERE tenant_id = @TenantId
         ORDER BY received_at DESC, id DESC
@@ -218,7 +223,8 @@ internal static class EventQueries
                         attempts AS Attempts,
                         next_attempt_at AS NextAttemptAt,
                         last_error AS LastError,
-                        source AS Source
+                        source AS Source,
+                        schema_version AS SchemaVersion
         FROM events
         WHERE status = @Status
           AND next_attempt_at <= @Now
@@ -248,11 +254,12 @@ internal static class EventQueries
                 @AttemptsArray::integer[],
                 @NextAttemptAts::timestamptz[],
                 @LastErrors::text[],
-                @Sources::text[]
+                @Sources::text[],
+                @SchemaVersions::smallint[]
             ) AS t(
                 id, tenant_id, event_type, occurred_at, received_at,
                 payload, idempotency_key, correlation_id, status, attempts,
-                next_attempt_at, last_error, source
+                next_attempt_at, last_error, source, schema_version
             )
         ),
         normalized_data AS (
@@ -264,6 +271,7 @@ internal static class EventQueries
                 NULLIF(next_attempt_at, '-infinity'::timestamptz) as next_attempt_at,
                 NULLIF(last_error, '') as last_error,
                 source,
+                schema_version,
                 input_order
             FROM input_data
         ),
@@ -271,12 +279,12 @@ internal static class EventQueries
             INSERT INTO events (
                 id, tenant_id, event_type, occurred_at, received_at,
                 payload, idempotency_key, correlation_id, status, attempts,
-                next_attempt_at, last_error, source
+                next_attempt_at, last_error, source, schema_version
             )
             SELECT
                 id, tenant_id, event_type, occurred_at, received_at,
                 payload::jsonb, idempotency_key, correlation_id, status, attempts,
-                next_attempt_at, last_error, source
+                next_attempt_at, last_error, source, schema_version
             FROM normalized_data
             ON CONFLICT (tenant_id, idempotency_key)
             WHERE idempotency_key IS NOT NULL
