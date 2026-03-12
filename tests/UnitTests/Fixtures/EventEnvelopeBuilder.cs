@@ -16,6 +16,7 @@ public class EventEnvelopeBuilder
     private string? _idempotencyKey = "idem-1";
     private Guid _correlationId = Guid.NewGuid();
     private JsonDocument _payload = JsonDocument.Parse("{\"orderId\":\"1\"}");
+    private short _schemaVersion = 1;
 
     public EventEnvelopeBuilder WithId(Guid id)
     {
@@ -65,6 +66,12 @@ public class EventEnvelopeBuilder
         return this;
     }
 
+    public EventEnvelopeBuilder WithSchemaVersion(short version)
+    {
+        _schemaVersion = version;
+        return this;
+    }
+
     public EventEnvelope Build() =>
         EventEnvelope.CreateNew(
             id: _id,
@@ -74,7 +81,8 @@ public class EventEnvelopeBuilder
             tenantId: _tenantId,
             idempotencyKey: _idempotencyKey,
             correlationId: _correlationId,
-            payload: _payload);
+            payload: _payload,
+            schemaVersion: _schemaVersion);
 
     /// <summary>
     /// Builds and transitions the envelope to QUEUED state.
