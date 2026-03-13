@@ -1,0 +1,63 @@
+# Project State
+
+## Project Reference
+
+See: .planning/PROJECT.md (updated 2026-03-12)
+
+**Core value:** Events that enter the system are never silently lost — every failure is visible, operable, and recoverable by an operator.
+**Current focus:** Phase 1 — DLQ Schema and Persistence
+
+## Current Position
+
+Phase: 1 of 6 (DLQ Schema and Persistence)
+Plan: 0 of ? in current phase
+Status: Ready to plan
+Last activity: 2026-03-12 — Roadmap created; v0.2 milestone defined with 6 phases covering DLQ, Admin API, Prometheus metrics, health checks, and alerting
+
+Progress: [░░░░░░░░░░] 0%
+
+## Performance Metrics
+
+**Velocity:**
+- Total plans completed: 0
+- Average duration: -
+- Total execution time: 0 hours
+
+**By Phase:**
+
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| - | - | - | - |
+
+**Recent Trend:**
+- Last 5 plans: -
+- Trend: -
+
+*Updated after each plan completion*
+
+## Accumulated Context
+
+### Decisions
+
+Decisions are logged in PROJECT.md Key Decisions table.
+Recent decisions affecting current work:
+
+- [Pre-Phase 1]: DLQ atomicity must follow InsertWithOutboxAsync pattern — MarkTerminalAndWriteDlqAsync in a single transaction; retrofitting is painful
+- [Pre-Phase 2]: FAILED_TERMINAL → QUEUED state machine tests must be green before any replay code is written
+- [Pre-Phase 5]: Replay ordering is DB-first: TryTransitionStatusAsync → MarkReplayedAsync → PublishAsync; never Redis-before-DB
+
+### Pending Todos
+
+None yet.
+
+### Blockers/Concerns
+
+- [Research flag]: Verify whether EventWorker already has an HTTP host configured before Phase 4 (health checks require HTTP endpoint in Worker)
+- [Research flag]: Confirm tenant cardinality before including tenant_id as a Prometheus label — safe only if bounded to <100 tenants
+- [Research flag]: Confirm exact SQL for TryTransitionStatusAsync with attempts=0 against EventRepository.cs before Phase 5
+
+## Session Continuity
+
+Last session: 2026-03-12
+Stopped at: Roadmap created, all 20 v1 requirements mapped to 6 phases, ready to plan Phase 1
+Resume file: None
